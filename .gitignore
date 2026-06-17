@@ -1,0 +1,8 @@
+.DS_Store
+server.log
+docx_render/
+.libreoffice-fixed/
+~$*
+Pelnomocnictwo_do_odbioru_pisma_Elzbieta_Babiracka.docx
+create_pelnomocnictwo.py
+.github/workflows/pages.yml

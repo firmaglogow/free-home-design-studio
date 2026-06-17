@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 92" role="img" aria-labelledby="title">
+  <title id="title">FREE HOME DESIGN STUDIO</title>
+  <g fill="none" fill-rule="evenodd">
+    <g transform="translate(2 4)">
+      <path fill="#F4F2ED" d="M0 0h42v18H19v16h20v18H19v32H0z"/>
+      <path fill="#D6FF3A" d="M38 0h19v32h20V0h19v84H77V51H57v33H38V48l13-16H38z"/>
+      <path fill="#121212" d="M38 32h16L38 50z"/>
+    </g>
+    <path stroke="#8A8A8A" stroke-width="1.5" d="M116 3v86"/>
+    <g fill="#F4F2ED" font-family="Montserrat, Arial, sans-serif">
+      <text x="142" y="43" font-size="31" font-weight="700" letter-spacing="6">FREE HOME</text>
+      <text x="143" y="72" fill="#A5A5A5" font-size="14" font-weight="600" letter-spacing="8">DESIGN STUDIO</text>
+    </g>
+  </g>
+</svg>
