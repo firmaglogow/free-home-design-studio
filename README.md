@@ -23,7 +23,7 @@ gałęzi `main` w ustawieniach repozytorium każdy `push` od razu odświeża str
 W katalogu głównym znajdują się pliki statyczne, więc nie ma tu żadnego buildu
 ani zależności od Netlify.
 
-Plik `CNAME` wskazuje domenę `www.freehomedesign.pl`, a `.nojekyll` wyłącza
+Plik `CNAME` wskazuje domenę `nowoczesnaklimatyzacja.com.pl`, a `.nojekyll` wyłącza
 obsługę Jekylla, żeby GitHub Pages serwował pliki dokładnie tak, jak są w repo.
 
 ## Pliki
