@@ -2329,6 +2329,28 @@ ul {
   line-height: 1.65;
 }
 
+.package-result {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 28px;
+  padding: 18px;
+  border: 1px solid rgba(255, 90, 60, 0.35);
+  background: rgba(255, 90, 60, 0.09);
+}
+
+.package-result strong {
+  color: var(--orange);
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.package-result span {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.74rem;
+  line-height: 1.6;
+}
+
 .pricing-disclaimer {
   display: grid;
   grid-template-columns: 54px 1fr;
@@ -2436,6 +2458,118 @@ ul {
 .audience-list svg {
   width: 19px;
   color: rgba(255, 255, 255, 0.35);
+}
+
+.scope-section {
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+}
+
+.scope-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.75fr) minmax(0, 1.25fr);
+  gap: 70px;
+  align-items: start;
+}
+
+.scope-copy h2 {
+  margin: 18px 0 26px;
+  font-family: var(--display);
+  font-size: clamp(3rem, 4.6vw, 5rem);
+  font-weight: 700;
+  letter-spacing: -0.075em;
+  line-height: 0.94;
+}
+
+.scope-copy h2 span {
+  color: var(--orange);
+}
+
+.scope-copy > p:not(.section-label) {
+  max-width: 580px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.85;
+}
+
+.scope-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+}
+
+.scope-card {
+  min-height: 410px;
+  padding: 30px;
+  border: 1px solid var(--line);
+  background: var(--white);
+}
+
+.scope-card-dark {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--white);
+}
+
+.scope-card > span {
+  display: inline-flex;
+  margin-bottom: 34px;
+  padding: 7px 10px;
+  background: var(--accent);
+  color: var(--ink);
+  font-size: 0.52rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.scope-card-dark > span {
+  background: var(--orange);
+  color: var(--white);
+}
+
+.scope-card h3 {
+  margin: 0 0 28px;
+  font-family: var(--display);
+  font-size: clamp(1.8rem, 2.4vw, 2.65rem);
+  font-weight: 700;
+  letter-spacing: -0.06em;
+  line-height: 1;
+}
+
+.scope-card ul {
+  display: grid;
+  gap: 15px;
+  margin: 0;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.scope-card-dark ul {
+  border-color: var(--line-light);
+}
+
+.scope-card li {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.scope-card-dark li {
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.scope-card li svg {
+  flex: 0 0 auto;
+  width: 16px;
+  margin-top: 2px;
+  color: #6f9900;
+}
+
+.scope-card-dark li svg {
+  color: var(--orange);
 }
 
 .process-section {
@@ -3098,7 +3232,8 @@ ul {
 
   .process-layout,
   .faq-layout,
-  .audience-layout {
+  .audience-layout,
+  .scope-layout {
     grid-template-columns: 1fr;
   }
 
@@ -3546,6 +3681,23 @@ ul {
 
   .audience-list h3 {
     font-size: 1.08rem;
+  }
+
+  .scope-layout {
+    gap: 34px;
+  }
+
+  .scope-copy h2 {
+    font-size: clamp(3rem, 13.5vw, 4.2rem);
+  }
+
+  .scope-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .scope-card {
+    min-height: 0;
+    padding: 25px 22px;
   }
 
   .process-heading h2,
