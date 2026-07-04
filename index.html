@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FREE HOME - projekt hero mobile</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@500;600;700;800&display=swap");
+
+      :root {
+        --forest-950: #071a0e;
+        --forest-900: #0a2113;
+        --forest-820: #102e1d;
+        --cream: #f7f1e3;
+        --cream-soft: rgba(247, 241, 227, 0.78);
+        --gold: #d4b86a;
+        --gold-2: #f0d37b;
+        --line: rgba(247, 241, 227, 0.14);
+        --shadow: 0 22px 70px rgba(0, 0, 0, 0.35);
+        --serif: "Cormorant Garamond", "Times New Roman", serif;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #e9e5da;
+        color: var(--cream);
+        font-family: var(--sans);
+      }
+
+      .page {
+        display: grid;
+        gap: 28px;
+        min-height: 100vh;
+        padding: 24px;
+      }
+
+      .brief {
+        width: min(100%, 880px);
+        margin: 0 auto;
+        color: #17231b;
+      }
+
+      .brief h1 {
+        margin: 0 0 8px;
+        font-size: clamp(28px, 4vw, 44px);
+        letter-spacing: 0;
+      }
+
+      .brief p {
+        margin: 0;
+        max-width: 720px;
+        color: rgba(23, 35, 27, 0.72);
+        line-height: 1.55;
+      }
+
+      .phone-wrap {
+        display: grid;
+        place-items: center;
+      }
+
+      .phone {
+        width: min(390px, 100%);
+        height: 844px;
+        overflow: hidden;
+        border: 12px solid #111;
+        border-radius: 34px;
+        background: var(--forest-950);
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.35);
+      }
+
+      .mobile-shell {
+        position: relative;
+        min-height: 100%;
+        overflow: hidden;
+        background: var(--forest-950);
+      }
+
+      .mobile-header {
+        position: relative;
+        z-index: 5;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 78px;
+        padding: 12px 20px;
+        background: rgba(7, 26, 14, 0.94);
+        border-bottom: 1px solid rgba(212, 184, 106, 0.16);
+      }
+
+      .mobile-header img {
+        width: 188px;
+        height: auto;
+      }
+
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .header-wa {
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        color: var(--gold);
+        text-decoration: none;
+      }
+
+      .header-wa svg {
+        width: 22px;
+        height: 22px;
+        display: block;
+      }
+
+      .hamburger {
+        width: 24px;
+      }
+
+      .hamburger span {
+        display: block;
+        height: 2px;
+        margin: 5px 0;
+        background: var(--cream);
+      }
+
+      .hero {
+        position: relative;
+        min-height: 766px;
+        padding: 30px 20px 18px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        overflow: hidden;
+      }
+
+      .hero::before {
+        content: "";
+        position: absolute;
+        inset: -2%;
+        z-index: 0;
+        background:
+          linear-gradient(180deg, rgba(7, 26, 14, 0.06) 0%, rgba(7, 26, 14, 0.36) 42%, rgba(7, 26, 14, 0.94) 100%),
+          linear-gradient(90deg, rgba(7, 26, 14, 0.58) 0%, rgba(7, 26, 14, 0.26) 58%, rgba(7, 26, 14, 0.1) 100%),
+          url("assets/freehome/hero-glogow-two-towers-mobile.jpeg") 16% top / cover no-repeat;
+        transform-origin: 16% top;
+        animation: heroImageDrift 18s ease-in-out infinite alternate;
+      }
+
+      .hero > * {
+        position: relative;
+        z-index: 1;
+      }
+
+      .hero-copy {
+        margin-top: auto;
+        padding-top: 170px;
+      }
+
+      .brand-line {
+        margin: 0;
+        color: var(--cream);
+        font-family: var(--serif);
+        font-size: 58px;
+        font-weight: 700;
+        line-height: 0.86;
+        letter-spacing: 0;
+        animation: heroReveal 720ms cubic-bezier(0.2, 0.8, 0.2, 1) 80ms both;
+      }
+
+      .hero-subtitle {
+        margin: 10px 0 0;
+        max-width: 335px;
+        color: var(--gold-2);
+        font-family: var(--serif);
+        font-size: 29px;
+        font-weight: 600;
+        line-height: 1.02;
+        letter-spacing: 0;
+        animation: heroReveal 720ms cubic-bezier(0.2, 0.8, 0.2, 1) 220ms both;
+      }
+
+      .cta-row {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 10px;
+        margin-top: 24px;
+        animation: heroReveal 700ms cubic-bezier(0.2, 0.8, 0.2, 1) 360ms both;
+      }
+
+      .cta {
+        min-height: 52px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        padding: 0 16px;
+        font-size: clamp(13px, 3.55vw, 14px);
+        font-weight: 800;
+        text-decoration: none;
+        transition: transform 160ms ease, filter 160ms ease;
+      }
+
+      .cta:active {
+        transform: scale(0.98);
+        filter: brightness(1.04);
+      }
+
+      .cta-primary {
+        background: var(--gold);
+        color: var(--forest-950);
+        box-shadow: 0 18px 38px rgba(212, 184, 106, 0.2);
+      }
+
+      .cta-secondary {
+        border-color: rgba(247, 241, 227, 0.28);
+        background: rgba(247, 241, 227, 0.08);
+        color: var(--cream);
+      }
+
+      .quick-search {
+        display: block;
+        position: relative;
+        margin-top: 14px;
+        border: 1px solid rgba(247, 241, 227, 0.18);
+        border-radius: 999px;
+        background: rgba(7, 26, 14, 0.56);
+        box-shadow: 0 18px 45px rgba(0, 0, 0, 0.24);
+        overflow: hidden;
+        backdrop-filter: blur(16px);
+        text-decoration: none;
+        animation: heroReveal 700ms cubic-bezier(0.2, 0.8, 0.2, 1) 500ms both;
+      }
+
+      .search-line {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 12px;
+        min-height: 58px;
+        padding: 7px 8px 7px 18px;
+      }
+
+      .search-copy {
+        overflow: hidden;
+      }
+
+      .search-label {
+        display: block;
+        margin-bottom: 1px;
+        color: rgba(247, 241, 227, 0.5);
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .search-value {
+        display: block;
+        color: var(--cream);
+        font-size: 14px;
+        font-weight: 650;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .search-button {
+        display: grid;
+        place-items: center;
+        position: relative;
+        width: 44px;
+        height: 44px;
+        flex: 0 0 auto;
+        border: 0;
+        border-radius: 50%;
+        background: var(--gold);
+        color: var(--forest-950);
+        font-size: 20px;
+        font-weight: 900;
+        isolation: isolate;
+        animation: searchButtonGlide 6.8s cubic-bezier(0.42, 0, 0.18, 1) infinite;
+      }
+
+      .search-button::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: 28px;
+        z-index: -1;
+        width: 94px;
+        height: 34px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(212, 184, 106, 0), rgba(212, 184, 106, 0.36));
+        filter: blur(7px);
+        opacity: 0.72;
+        transform: translateY(-50%);
+      }
+
+      @keyframes searchButtonGlide {
+        0% {
+          transform: translateX(-82px);
+          box-shadow: 0 0 0 rgba(212, 184, 106, 0);
+        }
+        8% {
+          box-shadow: 0 0 18px rgba(212, 184, 106, 0.22);
+        }
+        54% {
+          transform: translateX(0);
+          box-shadow: 0 0 24px rgba(212, 184, 106, 0.34);
+        }
+        72% {
+          transform: translateX(0);
+          box-shadow: 0 0 18px rgba(212, 184, 106, 0.18);
+        }
+        100% {
+          transform: translateX(-82px);
+          box-shadow: 0 0 0 rgba(212, 184, 106, 0);
+        }
+      }
+
+      @keyframes heroReveal {
+        from {
+          opacity: 0;
+          transform: translateY(14px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes heroImageDrift {
+        from {
+          transform: scale(1.015);
+        }
+        to {
+          transform: scale(1.055);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .hero::before,
+        .brand-line,
+        .hero-subtitle,
+        .cta-row,
+        .quick-search,
+        .proof-item,
+        .search-button,
+        .search-button::before {
+          animation: none;
+        }
+
+        .cta {
+          transition: none;
+        }
+      }
+
+      .proof {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .proof-item {
+        min-height: 78px;
+        padding: 10px;
+        border: 1px solid rgba(212, 184, 106, 0.16);
+        border-radius: 16px;
+        background: rgba(7, 26, 14, 0.52);
+        backdrop-filter: blur(12px);
+        animation: heroReveal 650ms cubic-bezier(0.2, 0.8, 0.2, 1) 640ms both;
+      }
+
+      .proof-item:nth-child(2) {
+        animation-delay: 730ms;
+      }
+
+      .proof-item:nth-child(3) {
+        animation-delay: 820ms;
+      }
+
+      .proof-number {
+        display: block;
+        margin-bottom: 2px;
+        color: var(--gold-2);
+        font-family: var(--serif);
+        font-size: 23px;
+        line-height: 1;
+      }
+
+      .proof-label {
+        display: block;
+        color: rgba(247, 241, 227, 0.7);
+        font-size: 11px;
+        line-height: 1.22;
+      }
+
+      .notes {
+        width: min(100%, 880px);
+        margin: 0 auto;
+        color: #17231b;
+      }
+
+      .notes h2 {
+        margin: 0 0 10px;
+      }
+
+      .notes ul {
+        margin: 0;
+        padding-left: 20px;
+        line-height: 1.65;
+      }
+
+      @media (max-width: 520px) {
+        .page {
+          padding: 0;
+          gap: 0;
+          background: var(--forest-950);
+        }
+
+        .brief,
+        .notes {
+          display: none;
+        }
+
+        .phone {
+          width: 100%;
+          height: 100dvh;
+          min-height: 760px;
+          border: 0;
+          border-radius: 0;
+          box-shadow: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="brief" aria-labelledby="brief-title">
+        <h1 id="brief-title">Projekt hero mobile dla FREE HOME</h1>
+        <p>
+          Kierunek: mniej formularza w pierwszym ekranie, więcej zaufania i jasna decyzja dla użytkownika:
+          sprawdzam oferty albo zamawiam wycenę.
+        </p>
+      </section>
+
+      <section class="phone-wrap" aria-label="Makieta telefonu">
+        <div class="phone">
+          <div class="mobile-shell">
+            <header class="mobile-header">
+              <img src="https://freehome.pl/brand/logo.webp" alt="FREE HOME Nieruchomości" />
+              <div class="header-actions">
+                <a class="header-wa" href="https://wa.me/48537264666" aria-label="Napisz przez WhatsApp">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M12 3.4a8.4 8.4 0 0 0-7.1 12.9l-1 3.4 3.5-.9A8.4 8.4 0 1 0 12 3.4Zm0 1.8a6.6 6.6 0 1 1 0 13.2c-1.2 0-2.4-.3-3.4-1l-.4-.2-1.7.5.5-1.6-.3-.4A6.6 6.6 0 0 1 12 5.2Zm-2.4 3.3c-.2 0-.5.1-.7.4-.2.3-.8.8-.8 1.9s.8 2.2.9 2.4c.1.2 1.6 2.6 4 3.5 2 .8 2.4.5 2.9.5.4-.1 1.3-.6 1.5-1.1.2-.5.2-1 .1-1.1-.1-.1-.2-.2-.5-.3l-1.5-.8c-.2-.1-.4-.1-.6.1l-.6.8c-.2.2-.3.2-.6.1-.3-.2-1.1-.4-2-1.2-.8-.7-1.3-1.5-1.4-1.8-.2-.3 0-.4.1-.6l.4-.5c.1-.2.2-.3.2-.5.1-.2 0-.4 0-.5l-.7-1.6c-.2-.5-.4-.5-.7-.5Z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                </a>
+                <span class="hamburger" aria-hidden="true"><span></span><span></span><span></span></span>
+              </div>
+            </header>
+
+            <section class="hero">
+              <div class="hero-copy">
+                <h1 class="brand-line">FREE HOME</h1>
+                <p class="hero-subtitle">Twoje lokalne biuro nieruchomości</p>
+
+                <div class="cta-row" aria-label="Główne akcje">
+                  <a class="cta cta-primary" href="/wycena/">Bezpłatna wycena</a>
+                  <a class="cta cta-secondary" href="tel:+48537264666">Zadzwoń</a>
+                </div>
+
+                <a class="quick-search" href="/oferty/" aria-label="Przejdź do wszystkich ofert nieruchomości">
+                  <div class="search-line">
+                    <span class="search-copy">
+                      <span class="search-label">Oferty w Głogowie</span>
+                      <span class="search-value">Znajdź nieruchomość</span>
+                    </span>
+                    <span class="search-button" aria-hidden="true">›</span>
+                  </div>
+                </a>
+
+                <div class="proof" aria-label="Dowody zaufania">
+                  <div class="proof-item">
+                    <span class="proof-number">10 lat</span>
+                    <span class="proof-label">lokalnego rynku</span>
+                  </div>
+                  <div class="proof-item">
+                    <span class="proof-number">400+</span>
+                    <span class="proof-label">transakcji</span>
+                  </div>
+                  <div class="proof-item">
+                    <span class="proof-number">276+</span>
+                    <span class="proof-label">opinii Google</span>
+                  </div>
+                </div>
+
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="notes">
+        <h2>Założenia do wdrożenia</h2>
+        <ul>
+          <li>Nie pokazuj pięciu pól formularza od razu. W hero wystarczy search pill + przejście do pełnej listy.</li>
+          <li>Najważniejsza akcja na mobile: bezpłatna wycena. Druga akcja: telefon.</li>
+          <li>Statystyki mają być małe i czytelne, nie jako duże elementy pod formularzem.</li>
+          <li>Tekst musi być krótszy niż obecnie i nie może zasłaniać całego zdjęcia.</li>
+          <li>Banner cookies nie może przykrywać CTA ani searcha.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>
