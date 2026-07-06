@@ -2,7 +2,7 @@
 # ── Redeploy narzędzia zdjecia.freehome.pl — STRONA SERWERA (cPanel) ───────────
 # Pobiera branch deploy-photo-crm, podmienia kod, npm install, restart, test.
 # Env (APP_PASS / OPENAI_API_KEY) ustawione w panelu Node.js ZOSTAJĄ nietknięte.
-set -euo pipefail
+set -eo pipefail   # bez -u: skrypt `activate` CloudLinuxa używa niezdefiniowanego CL_VIRTUAL_ENV
 APP="/home/dm82980/zdjecia.freehome.pl"
 REPO="https://github.com/firmaglogow/free-home-design-studio.git"
 BRANCH="deploy-photo-crm"
