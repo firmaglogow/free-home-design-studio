@@ -236,7 +236,7 @@ app.post("/api/photo-edits", upload.single("image"), async (request, response) =
       return;
     }
 
-    const editMode = normalizeEditMode(request.body.editMode);
+    const editMode = shouldAllowGenerativeAi(request.body) ? normalizeEditMode(request.body.editMode) : "enhance";
     const framingMode = normalizeFramingMode(request.body.framingMode);
     const outputSize = getOutputSize(request.body.outputResolution);
 
@@ -501,6 +501,10 @@ function normalizeQuality(value) {
 
 function normalizeEditMode(value) {
   return String(value ?? "ai") === "enhance" ? "enhance" : "ai";
+}
+
+function shouldAllowGenerativeAi(body) {
+  return String(body?.allowGenerativeAi ?? "").toLowerCase() === "true";
 }
 
 function normalizeFramingMode(value) {
