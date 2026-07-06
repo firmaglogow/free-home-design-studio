@@ -1,9 +1,10 @@
 import dotenv from "dotenv";
+import { installCrmGuard } from "./crm-auth.mjs";
 import express from "express";
 import multer from "multer";
 import sharp from "sharp";
 import { ZipArchive } from "archiver";
-import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
@@ -18,120 +19,129 @@ const port = Number(process.env.PORT ?? 5173);
 const imageModel = process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-1.5";
 const analysisModel = process.env.OPENAI_ANALYSIS_MODEL ?? "gpt-5.5";
 const outputDir = path.join(__dirname, ".generated");
-const editInputSize = "1536x1024";
 const outputSizes = {
-  "1k": { id: "1k", width: 1536, height: 1024 },
-  "2k": { id: "2k", width: 2400, height: 1600 },
-  "4k": { id: "4k", width: 3840, height: 2560 },
+  "1k": { id: "1k", width: 1536, height: 1024, longEdge: 1536 },
+  "2k": { id: "2k", width: 2400, height: 1600, longEdge: 2400 },
+  "4k": { id: "4k", width: 3840, height: 2560, longEdge: 3840 },
 };
 const defaultOutputSize = outputSizes["4k"];
 
 const app = express();
+installCrmGuard(app);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
-// --- Dostęp: zamknięte dla ludzi z zewnątrz ------------------------------------
-// Aktywne, gdy w env jest APP_PASS (hasło do logowania bezpośredniego, np. Daria)
-// i/lub APP_KEY (klucz w URL ?key= do osadzenia w CRM przez iframe). Brak obu = otwarte (dev).
-// Dwa wejścia:
-//   • BEZPOŚREDNIO: zdjecia.freehome.pl → formularz → hasło APP_PASS → cookie.
-//   • PRZEZ CRM: iframe ...?key=SEKRET → cookie (formularza nie widać; blokada popupów w iframe nie dotyczy).
-// Cookie foto_auth: httponly, same-site (zdjecia+crm to freehome.pl), 12 h.
 const APP_KEY = String(process.env.APP_KEY ?? "").trim();
 const APP_PASS = String(process.env.APP_PASS ?? "").trim();
-const URL_SECRET = APP_KEY || APP_PASS; // ?key= sprawdza APP_KEY; gdy brak — APP_PASS
+const URL_SECRET = APP_KEY || APP_PASS;
 const AUTH_ON = Boolean(APP_PASS || APP_KEY);
 const FRAME_ANCESTORS = process.env.FRAME_ANCESTORS ?? "'self' https://crm.freehome.pl";
 const AUTH_COOKIE = "foto_auth";
-const AUTH_TOKEN = AUTH_ON
-  ? createHash("sha256").update("foto-auth|" + APP_KEY + "|" + APP_PASS).digest("hex")
-  : "";
+const AUTH_TOKEN = AUTH_ON ? createHash("sha256").update(`foto-auth|${APP_KEY}|${APP_PASS}`).digest("hex") : "";
+
 function safeEqual(a, b) {
-  const ab = Buffer.from(String(a));
-  const bb = Buffer.from(String(b));
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
+  const first = Buffer.from(String(a));
+  const second = Buffer.from(String(b));
+  return first.length === second.length && timingSafeEqual(first, second);
 }
+
 function readCookies(header) {
-  const out = {};
+  const cookies = {};
+
   for (const part of String(header || "").split(";")) {
-    const i = part.indexOf("=");
-    if (i > -1) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+    const index = part.indexOf("=");
+
+    if (index > -1) {
+      cookies[part.slice(0, index).trim()] = part.slice(index + 1).trim();
+    }
   }
-  return out;
+
+  return cookies;
 }
-function setAuthCookie(req, res) {
-  const proto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+
+function setAuthCookie(request, response) {
+  const proto = String(request.headers["x-forwarded-proto"] || "").split(",")[0].trim();
   const secure = proto === "https";
-  res.setHeader(
+  response.setHeader(
     "Set-Cookie",
     `${AUTH_COOKIE}=${AUTH_TOKEN}; Path=/; Max-Age=43200; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`,
   );
 }
-function loginPage(bladHasla) {
+
+function loginPage(hasError) {
   return `<!doctype html><html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow">
-<title>FREE HOME — logowanie</title><style>
- *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;
- font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
- background:linear-gradient(160deg,#071a0e,#0a2113);color:#f5f1e8;padding:20px}
- .card{background:#0d2618;border:1px solid rgba(197,164,78,.25);border-radius:16px;padding:28px;
- width:min(360px,92vw);box-shadow:0 12px 34px rgba(0,0,0,.45);text-align:center}
- h1{font-size:21px;margin:0 0 4px;letter-spacing:.3px}h1 b{color:#d4b86a}
- p{color:#bfc7bd;font-size:13px;margin:0 0 18px}
- input{width:100%;padding:12px;border-radius:10px;border:1px solid #1a4a2e;background:#071a0e;color:#f5f1e8;font-size:15px}
- input:focus{outline:none;border-color:#c5a44e}
- button{width:100%;margin-top:14px;padding:12px;border:0;border-radius:999px;background:#c5a44e;color:#071a0e;font-weight:800;font-size:15px;cursor:pointer}
- button:hover{background:#d4b86a}
- .err{margin:0 0 14px;padding:9px 11px;border-radius:9px;background:rgba(192,57,43,.18);border:1px solid rgba(231,76,60,.5);font-size:13px}
+<title>FREE HOME - logowanie</title><style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(160deg,#071a0e,#0a2113);color:#f5f1e8;padding:20px}
+.card{background:#0d2618;border:1px solid rgba(197,164,78,.25);border-radius:16px;padding:28px;width:min(360px,92vw);box-shadow:0 12px 34px rgba(0,0,0,.45);text-align:center}
+h1{font-size:21px;margin:0 0 4px;letter-spacing:.3px}h1 b{color:#d4b86a}p{color:#bfc7bd;font-size:13px;margin:0 0 18px}
+input{width:100%;padding:12px;border-radius:10px;border:1px solid #1a4a2e;background:#071a0e;color:#f5f1e8;font-size:15px}
+input:focus{outline:none;border-color:#c5a44e}button{width:100%;margin-top:14px;padding:12px;border:0;border-radius:999px;background:#c5a44e;color:#071a0e;font-weight:800;font-size:15px;cursor:pointer}
+button:hover{background:#d4b86a}.err{margin:0 0 14px;padding:9px 11px;border-radius:9px;background:rgba(192,57,43,.18);border:1px solid rgba(231,76,60,.5);font-size:13px}
 </style></head><body>
- <form class="card" method="post" action="/login" autocomplete="off">
-  <h1>FREE <b>HOME</b></h1>
-  <p>Obróbka zdjęć AI — strefa wewnętrzna</p>
-  ${bladHasla ? '<div class="err">Błędne hasło. Spróbuj ponownie.</div>' : ""}
-  <input type="password" name="haslo" placeholder="Hasło" autofocus autocomplete="current-password" required>
-  <button type="submit">Wejdź</button>
- </form>
+<form class="card" method="post" action="/login" autocomplete="off">
+<h1>FREE <b>HOME</b></h1>
+<p>Obrobka zdjec AI - strefa wewnetrzna</p>
+${hasError ? '<div class="err">Bledne haslo. Sprobuj ponownie.</div>' : ""}
+<input type="password" name="haslo" placeholder="Haslo" autofocus autocomplete="current-password" required>
+<button type="submit">Wejdz</button>
+</form>
 </body></html>`;
 }
-app.use((req, res, next) => {
-  res.setHeader("Content-Security-Policy", "frame-ancestors " + FRAME_ANCESTORS);
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  if (!AUTH_ON) return next(); // brak ochrony (lokalnie/dev)
 
-  // 1) ważne cookie
-  const cookies = readCookies(req.headers.cookie);
-  if (cookies[AUTH_COOKIE] && safeEqual(cookies[AUTH_COOKIE], AUTH_TOKEN)) return next();
+app.use((request, response, next) => {
+  response.setHeader("Content-Security-Policy", `frame-ancestors ${FRAME_ANCESTORS}`);
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("X-Robots-Tag", "noindex, nofollow");
+  response.setHeader("Referrer-Policy", "no-referrer");
 
-  // 2) ?key= — wejście przez CRM (iframe)
-  let urlKey = "";
-  try { urlKey = new URL(req.url, "http://x").searchParams.get("key") || ""; } catch { /* ignore */ }
-  if (URL_SECRET && urlKey && safeEqual(urlKey, URL_SECRET)) {
-    setAuthCookie(req, res);
-    return next();
+  if (!AUTH_ON) {
+    next();
+    return;
   }
 
-  // 3) POST /login — logowanie hasłem (bezpośrednio, np. Daria)
-  if (req.method === "POST" && req.path === "/login") {
-    const haslo = String((req.body && req.body.haslo) || "");
-    if (APP_PASS && safeEqual(haslo, APP_PASS)) {
-      setAuthCookie(req, res);
-      res.statusCode = 302;
-      res.setHeader("Location", "/");
-      res.end();
+  const cookies = readCookies(request.headers.cookie);
+
+  if (cookies[AUTH_COOKIE] && safeEqual(cookies[AUTH_COOKIE], AUTH_TOKEN)) {
+    next();
+    return;
+  }
+
+  let urlKey = "";
+
+  try {
+    urlKey = new URL(request.url, "http://x").searchParams.get("key") || "";
+  } catch {
+    urlKey = "";
+  }
+
+  if (URL_SECRET && urlKey && safeEqual(urlKey, URL_SECRET)) {
+    setAuthCookie(request, response);
+    next();
+    return;
+  }
+
+  if (request.method === "POST" && request.path === "/login") {
+    const password = String((request.body && request.body.haslo) || "");
+
+    if (APP_PASS && safeEqual(password, APP_PASS)) {
+      setAuthCookie(request, response);
+      response.statusCode = 302;
+      response.setHeader("Location", "/");
+      response.end();
       return;
     }
-    res.status(401).type("text/html; charset=utf-8").send(loginPage(true));
+
+    response.status(401).type("text/html; charset=utf-8").send(loginPage(true));
     return;
   }
 
-  // 4) niezalogowany: formularz (strony) albo 401 JSON (API)
-  if (req.path.startsWith("/api/")) {
-    res.status(401).json({ error: "Wymagane logowanie." });
+  if (request.path.startsWith("/api/")) {
+    response.status(401).json({ error: "Wymagane logowanie." });
     return;
   }
-  res.status(401).type("text/html; charset=utf-8").send(loginPage(false));
+
+  response.status(401).type("text/html; charset=utf-8").send(loginPage(false));
 });
 
 const upload = multer({
@@ -147,7 +157,8 @@ app.post("/api/photo-analysis", upload.single("image"), async (request, response
 
     if (!apiKey) {
       response.status(503).json({
-        error: "Wpisz prawdziwy OPENAI_API_KEY w pliku .env.",
+        error:
+          "Na stronie online nie ma ustawionego OPENAI_API_KEY. Dodaj klucz w ustawieniach hostingu jako zmienną środowiskową i uruchom/deployuj aplikację ponownie.",
       });
       return;
     }
@@ -218,15 +229,6 @@ app.post("/api/photo-analysis", upload.single("image"), async (request, response
 
 app.post("/api/photo-edits", upload.single("image"), async (request, response) => {
   try {
-    const apiKey = getOpenAIKey();
-
-    if (!apiKey) {
-      response.status(503).json({
-        error: "Wpisz prawdziwy OPENAI_API_KEY w pliku .env.",
-      });
-      return;
-    }
-
     if (!request.file) {
       response.status(400).json({
         error: "Nie przesłano zdjęcia.",
@@ -234,7 +236,41 @@ app.post("/api/photo-edits", upload.single("image"), async (request, response) =
       return;
     }
 
-    const prompt = buildPortalEditPrompt(String(request.body.prompt ?? "").trim());
+    const editMode = normalizeEditMode(request.body.editMode);
+    const framingMode = normalizeFramingMode(request.body.framingMode);
+    const outputSize = getOutputSize(request.body.outputResolution);
+
+    if (editMode === "enhance") {
+      const output = await makeFaithfulPhotoJpeg(request.file.buffer, outputSize, framingMode);
+      const outputFileName = createOutputFileName(request.file.originalname, outputSize.id);
+      const outputPath = path.join(outputDir, outputFileName);
+
+      await mkdir(outputDir, { recursive: true });
+      await writeFile(outputPath, output.buffer);
+
+      response.json({
+        image: `/generated/${encodeURIComponent(outputFileName)}`,
+        downloadUrl: `/api/download/${encodeURIComponent(outputFileName)}`,
+        fileName: outputFileName,
+        resolution: outputSize.id,
+        width: output.width,
+        height: output.height,
+        mode: editMode,
+      });
+      return;
+    }
+
+    const apiKey = getOpenAIKey();
+
+    if (!apiKey) {
+      response.status(503).json({
+        error:
+          "Na stronie online nie ma ustawionego OPENAI_API_KEY. Dodaj klucz w ustawieniach hostingu jako zmienną środowiskową i uruchom/deployuj aplikację ponownie.",
+      });
+      return;
+    }
+
+    const prompt = buildPortalEditPrompt(String(request.body.prompt ?? "").trim(), framingMode);
 
     if (!prompt) {
       response.status(400).json({
@@ -244,8 +280,8 @@ app.post("/api/photo-edits", upload.single("image"), async (request, response) =
     }
 
     const quality = normalizeQuality(request.body.quality);
-    const outputSize = getOutputSize(request.body.outputResolution);
     const outputFormat = "jpeg";
+    const editInputSize = await getOpenAIEditInputSize(request.file.buffer, framingMode);
 
     const formData = new FormData();
     const imageBlob = new Blob([request.file.buffer], {
@@ -288,20 +324,21 @@ app.post("/api/photo-edits", upload.single("image"), async (request, response) =
       return;
     }
 
-    const outputBuffer = await makePortalJpeg(editedImageBuffer, outputSize);
+    const output = await makePortalJpeg(editedImageBuffer, outputSize, framingMode);
     const outputFileName = createOutputFileName(request.file.originalname, outputSize.id);
     const outputPath = path.join(outputDir, outputFileName);
 
     await mkdir(outputDir, { recursive: true });
-    await writeFile(outputPath, outputBuffer);
+    await writeFile(outputPath, output.buffer);
 
     response.json({
       image: `/generated/${encodeURIComponent(outputFileName)}`,
       downloadUrl: `/api/download/${encodeURIComponent(outputFileName)}`,
       fileName: outputFileName,
       resolution: outputSize.id,
-      width: outputSize.width,
-      height: outputSize.height,
+      width: output.width,
+      height: output.height,
+      mode: editMode,
     });
   } catch (error) {
     response.status(500).json({
@@ -462,29 +499,49 @@ function normalizeQuality(value) {
   return ["low", "medium", "high"].includes(quality) ? quality : "high";
 }
 
+function normalizeEditMode(value) {
+  return String(value ?? "ai") === "enhance" ? "enhance" : "ai";
+}
+
+function normalizeFramingMode(value) {
+  return String(value ?? "original") === "portal" ? "portal" : "original";
+}
+
 function getOutputSize(value) {
   const resolution = String(value ?? defaultOutputSize.id).toLowerCase();
   return outputSizes[resolution] ?? defaultOutputSize;
 }
 
-function buildPortalEditPrompt(userPrompt) {
+function buildPortalEditPrompt(userPrompt, framingMode) {
   if (!userPrompt) {
     return "";
   }
 
+  const framingInstruction =
+    framingMode === "portal"
+      ? "- Kadr może być przygotowany jako poziomy 3:2 na portale, ale nie wolno wymyślać nowych fragmentów mieszkania ani zmieniać geometrii wnętrza, żeby wypełnić kadr."
+      : "- Zachowaj oryginalny kadr i proporcje zdjęcia możliwie 1:1. Nie rozszerzaj sceny, nie dorysowuj boków i nie kadruj tak, żeby zmienić odbiór układu.";
+
   return [
     userPrompt,
     "Wymagania techniczne wyniku:",
-    "- Finalny kadr ma być zawsze poziomy, w proporcji 3:2, gotowy na portale nieruchomości.",
-    "- To jest profesjonalna obróbka zdjęcia, nie redesign wnętrza. Finalny obraz musi pozostać bez pomyłki tym samym mieszkaniem i tą samą nieruchomością.",
-    "- Nie zmieniaj układu pokoju, architektury, ścian, sufitu, okien, drzwi, podłogi, schodów, kuchni, łazienki, zabudowy, szaf, mebli stałych, proporcji pomieszczenia, pozycji kamery, ogniskowej, perspektywy ani kompozycji.",
-    "- Efekt ma wyglądać jak luksusowe zdjęcie wnętrza wykonane pełnoklatkową lustrzanką przez profesjonalnego fotografa architektury: naturalne światło, czyste piony, wysoka ostrość, balanced exposure, natural white balance, lens correction, noise reduction i micro contrast.",
-    "- Korekta pionów i obiektywu jest dozwolona tylko tak, aby zachować ten sam kadr, tę samą pozycję kamery i tę samą nieruchomość.",
+    framingInstruction,
+    "- To jest wierny retusz zdjęcia, nie redesign wnętrza. Finalny obraz musi pozostać tym samym kadrem, tym samym mieszkaniem i tą samą nieruchomością.",
+    "- Zdjęcie wejściowe jest źródłem prawdy. Jeżeli jakiekolwiek polecenie mogłoby zmienić nieruchomość, zignoruj tę część i zachowaj oryginał.",
+    "- Nie zmieniaj układu pokoju, architektury, ścian, sufitu, liczby okien, wielkości okien, kształtu okien, położenia okien, drzwi, podłogi, schodów, kuchni, łazienki, zabudowy, szaf, mebli stałych, położenia mebli, rozmiaru mebli, grubości mebli, blatów, kafelków, fug, proporcji pomieszczenia, pozycji kamery, ogniskowej, perspektywy ani kompozycji.",
+    "- Układ okien jest nietykalny: zachowaj dokładnie tę samą liczbę, wielkość, kształt, ramy, parapety, położenie i widok przez okna. Nie dodawaj okien, nie usuwaj okien i nie zmieniaj ich rozmiaru.",
+    "- Meble są zablokowane w swoich miejscach i wymiarach: nie przesuwaj, nie obracaj, nie zmieniaj rozmiaru, nie zmieniaj grubości, nie wymieniaj i nie usuwaj kanap, łóżek, stołów, krzeseł, szafek, AGD, grzejników, zabudowy ani stałego wyposażenia.",
+    "- Kuchnia i łazienka są zablokowane geometrycznie: nie zmieniaj blatów, frontów, uchwytów, kafelków, fug, armatury, AGD, wanny, umywalki, lustra, grzejników ani ich położenia.",
+    "- Lampy i punkty świetlne są zablokowane: nie dodawaj, nie usuwaj i nie zmieniaj lamp, żyrandoli, kinkietów, plafonów, lampek nocnych, lamp stojących, listew LED ani punktów świetlnych.",
+    "- Efekt ma wyglądać jak profesjonalnie wyretuszowane zdjęcie nieruchomości: naturalne światło, wysoka ostrość, balanced exposure, natural white balance, lens correction, noise reduction i micro contrast.",
+    "- Korekta pionów i obiektywu jest dozwolona tylko minimalnie, tak aby zachować ten sam kadr, tę samą pozycję kamery, ten sam rozmiar obiektów i tę samą nieruchomość.",
     "- Jeżeli ściany lub sufit są białe, mogą być idealnie śnieżnobiałe #FFFFFF. Inne kolory ścian, podłóg, mebli, zabudowy i materiałów zachowaj jak w oryginale.",
-    "- Usuń rzeczy osobiste, bałagan, kable, papiery, ubrania, kosmetyki, detergenty, naczynia, jedzenie, butelki, kosze, przypadkowe dodatki i niepotrzebne dekoracje. Zostaw stałe wyposażenie mieszkania.",
-    "- Subtelny home staging jest dozwolony tylko minimalnie i naturalnie: poduszki, pled, książka, świeca, wazon, taca, hotelowa pościel, drewniana deska, miska cytryn lub jabłek, małe zioło, ręcznik, dozownik mydła albo mała roślina, jeśli pasują do pomieszczenia.",
-    "- Podkręć jakość zdjęcia katalogowo, ale realistycznie. To ma być ultra-fotorealistyczne luxury boutique real estate photography, nie remont, nie render, nie CGI.",
-    "- Brak HDR, brak CGI, brak renderingu, brak mebli AI, brak fantazyjnego wnętrza, brak fałszywej architektury, brak fałszywego słońca, brak nierealnych cieni, brak wymiany mebli.",
+    "- Usuń rzeczy osobiste, bałagan, kable, papiery, ubrania, kosmetyki, detergenty, naczynia, jedzenie, butelki, kosze, przypadkowe dodatki i niepotrzebne dekoracje. Odsłonięte tło odtwórz wyłącznie z bezpośredniego otoczenia: ten sam wzór kafelków, fug, blatu, podłogi, ściany lub mebla. Zostaw stałe wyposażenie mieszkania. Jeżeli widać łóżko, pościel je równo i hotelowo, ale nie zmieniaj łóżka, rozmiaru łóżka, ramy, zagłówka ani jego położenia.",
+    "- Nie dodawaj home stagingu ani nowych przedmiotów, chyba że użytkownik wyraźnie o to poprosił.",
+    "- Nie dodawaj lamp, żyrandoli, kinkietów, lampek nocnych, lamp stojących, listew LED, zasłon ani rolet, chyba że użytkownik wyraźnie o to poprosił.",
+    "- Zwiększ naturalne światło dzienne tylko przez realistyczną korektę ekspozycji, balansu bieli i istniejące okna. Nie dodawaj sztucznego słońca, nowych lamp, nowych refleksów ani nierealnych cieni.",
+    "- Podkręć jakość zdjęcia katalogowo, ale realistycznie. To ma być ultra-fotorealistyczne zdjęcie tej samej nieruchomości, nie remont, nie render, nie CGI.",
+    "- Brak HDR, brak CGI, brak renderingu, brak mebli AI, brak fantazyjnego wnętrza, brak fałszywej architektury, brak fałszywego słońca, brak nierealnych cieni, brak wymiany mebli, brak przesuwania mebli, brak zmiany rozmiaru lub grubości mebli, brak zmiany blatów, brak zmiany kafelków, brak zmiany fug, brak zmiany układu okien, brak nowych lamp.",
     "- Nie generuj napisów, ramek, znaków wodnych ani porównania przed/po.",
   ].join("\n\n");
 }
@@ -511,21 +568,85 @@ async function getEditedImageBuffer(payload) {
   return Buffer.from(await imageResponse.arrayBuffer());
 }
 
-async function makePortalJpeg(imageBuffer, outputSize) {
-  return sharp(imageBuffer, { limitInputPixels: false })
+async function getOpenAIEditInputSize(imageBuffer, framingMode) {
+  if (framingMode === "portal") {
+    return "1536x1024";
+  }
+
+  const metadata = await sharp(imageBuffer, { limitInputPixels: false }).metadata();
+  const width = metadata.width || 1;
+  const height = metadata.height || 1;
+  const aspectRatio = width / height;
+
+  if (aspectRatio > 1.12) {
+    return "1536x1024";
+  }
+
+  if (aspectRatio < 0.9) {
+    return "1024x1536";
+  }
+
+  return "1024x1024";
+}
+
+async function makeFaithfulPhotoJpeg(imageBuffer, outputSize, framingMode) {
+  const pipeline = sharp(imageBuffer, { limitInputPixels: false })
     .rotate()
-    .resize(outputSize.width, outputSize.height, {
+    .modulate({
+      brightness: 1.08,
+      saturation: 1.04,
+    })
+    .linear(1.04, -2)
+    .sharpen({
+      sigma: 0.8,
+      m1: 0.8,
+      m2: 1.5,
+    });
+
+  return finishJpeg(resizeForFraming(pipeline, outputSize, framingMode));
+}
+
+async function makePortalJpeg(imageBuffer, outputSize, framingMode) {
+  const pipeline = sharp(imageBuffer, { limitInputPixels: false }).rotate().sharpen({
+    sigma: 0.6,
+    m1: 0.5,
+    m2: 1.1,
+  });
+
+  return finishJpeg(resizeForFraming(pipeline, outputSize, framingMode));
+}
+
+function resizeForFraming(pipeline, outputSize, framingMode) {
+  if (framingMode === "portal") {
+    return pipeline.resize(outputSize.width, outputSize.height, {
       fit: "cover",
       position: "attention",
       withoutEnlargement: false,
-    })
-    .sharpen()
+    });
+  }
+
+  return pipeline.resize(outputSize.longEdge, outputSize.longEdge, {
+    fit: "inside",
+    withoutEnlargement: false,
+  });
+}
+
+async function finishJpeg(pipeline) {
+  const buffer = await pipeline
     .jpeg({
       quality: 95,
       mozjpeg: true,
       chromaSubsampling: "4:4:4",
     })
     .toBuffer();
+
+  const metadata = await sharp(buffer, { limitInputPixels: false }).metadata();
+
+  return {
+    buffer,
+    width: metadata.width,
+    height: metadata.height,
+  };
 }
 
 function createOutputFileName(originalName, resolution) {
@@ -631,14 +752,14 @@ function buildAnalysisInstruction(rules) {
     "Nazwij typ pomieszczenia możliwie jednoznacznie, np. łazienka, kuchnia, salon, sypialnia, przedpokój, taras. Jeżeli nie masz pewności, napisz to.",
     "Zwróć krótki opis w sekcjach:",
     "1. Typ pomieszczenia.",
-    "2. Co widać: układ, perspektywa, główne stałe elementy i wyposażenie stałe.",
-    "3. Zachować dokładnie: architektura, ściany, podłogi, okna, drzwi, zabudowa, meble stałe, sprzęty, armatura, grzejniki, układ i proporcje.",
-    "4. Kolory i materiały do zachowania: ściany, płytki, podłogi, meble, zabudowa, sprzęty, metal, drewno, szkło, tkaniny.",
+    "2. Co widać: układ, perspektywa, główne stałe elementy, wyposażenie stałe, dokładne położenie mebli, okien i lamp.",
+    "3. Zachować dokładnie: architektura, ściany, podłogi, liczba okien, wielkość okien, kształt okien, położenie okien, widok przez okna, drzwi, zabudowa, meble stałe, położenie mebli, rozmiary mebli, grubości mebli, blaty, kafelki, fugi, sprzęty, armatura, grzejniki, lampy, punkty świetlne, układ i proporcje.",
+    "4. Kolory i materiały do zachowania: ściany, płytki, fugi, podłogi, blaty, meble, zabudowa, sprzęty, metal, drewno, szkło, tkaniny.",
     "5. Rzeczy możliwe do usunięcia: tylko rzeczy osobiste, bałagan, kosmetyki, detergenty, naczynia, ubrania, papiery, butelki, kable i przypadkowe dodatki.",
     "6. Czyszczenie: konkretne powierzchnie, które powinny wyglądać idealnie czysto, np. wanna, umywalka, lustro, armatura, blat, podłoga, fuga, szkło, sprzęty AGD.",
-    "7. Subtelny staging pasujący do pokoju: maksymalnie 3-4 małe elementy, tylko jeśli naturalnie pasują.",
+    "7. Staging: domyślnie nie proponuj dodawania nowych przedmiotów. Jeśli użytkownik wyraźnie poprosi o staging, maksymalnie 3-4 małe elementy, bez nowych lamp, zmian okien, zmian blatów, zmian kafelków ani przesuwania mebli.",
     "8. Ostrożność: napisz, czego nie jesteś pewien, zamiast zgadywać.",
-    "Nie wskazuj usuwania mebli, dekoracji ani zmiany kolorów, chyba że to są oczywiste rzeczy osobiste lub śmieci.",
+    "Nie wskazuj usuwania mebli, przesuwania mebli, zmiany rozmiaru mebli, zmiany blatów, zmiany kafelków, zmiany fug, dodawania lamp, zmiany okien, dekoracji ani zmiany kolorów, chyba że to są oczywiste rzeczy osobiste lub śmieci.",
     rules ? `Twarde zasady aplikacji:\n${rules}` : "",
   ]
     .filter(Boolean)
