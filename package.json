@@ -1,0 +1,28 @@
+{
+  "name": "photo-crm-ai",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && node server.mjs",
+    "build": "tsc -p tsconfig.app.json --pretty false && node scripts/build-client.mjs",
+    "preview": "node server.mjs",
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "archiver": "^8.0.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "lucide-react": "^0.468.0",
+    "multer": "^2.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sharp": "^0.35.3",
+    "typescript": "^5.7.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "esbuild": "^0.28.1"
+  }
+}
