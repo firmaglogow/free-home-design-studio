@@ -1,5 +1,4 @@
 import dotenv from "dotenv";
-import { installCrmGuard } from "./crm-auth.mjs";
 import express from "express";
 import multer from "multer";
 import sharp from "sharp";
@@ -27,7 +26,6 @@ const outputSizes = {
 const defaultOutputSize = outputSizes["4k"];
 
 const app = express();
-installCrmGuard(app);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
@@ -223,6 +221,89 @@ app.post("/api/photo-analysis", upload.single("image"), async (request, response
   } catch (error) {
     response.status(500).json({
       error: error instanceof Error ? error.message : "Nie udało się odczytać zdjęcia.",
+    });
+  }
+});
+
+app.post("/api/photo-prompt", upload.single("image"), async (request, response) => {
+  try {
+    const apiKey = getOpenAIKey();
+
+    if (!apiKey) {
+      response.status(503).json({
+        error:
+          "Na stronie online nie ma ustawionego OPENAI_API_KEY. Dodaj klucz w ustawieniach hostingu jako zmienną środowiskową i uruchom/deployuj aplikację ponownie.",
+      });
+      return;
+    }
+
+    if (!request.file) {
+      response.status(400).json({
+        error: "Nie przesłano zdjęcia.",
+      });
+      return;
+    }
+
+    const imageDataUrl = `data:${request.file.mimetype || "image/jpeg"};base64,${request.file.buffer.toString("base64")}`;
+
+    const openaiResponse = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: analysisModel,
+        max_output_tokens: 2200,
+        input: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: buildPromptGeneratorInstruction({
+                  rules: String(request.body.rules ?? "").trim(),
+                  userRequest: String(request.body.userRequest ?? "").trim(),
+                  outputResolution: String(request.body.outputResolution ?? "4k").trim(),
+                  framingMode: String(request.body.framingMode ?? "original").trim(),
+                  presetIds: String(request.body.presetIds ?? "").trim(),
+                  fileName: request.file.originalname || "property-photo.jpg",
+                }),
+              },
+              {
+                type: "input_image",
+                image_url: imageDataUrl,
+                detail: "high",
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const payload = await openaiResponse.json();
+
+    if (!openaiResponse.ok) {
+      response.status(openaiResponse.status).json({
+        error: extractOpenAIError(payload),
+      });
+      return;
+    }
+
+    const text = extractResponseText(payload);
+    const result = splitPromptResponse(text);
+
+    if (!result.prompt) {
+      response.status(502).json({
+        error: "OpenAI nie zwróciło promptu.",
+      });
+      return;
+    }
+
+    response.json(result);
+  } catch (error) {
+    response.status(500).json({
+      error: error instanceof Error ? error.message : "Nie udało się stworzyć promptu.",
     });
   }
 });
@@ -747,6 +828,82 @@ function extractResponseText(payload) {
   }
 
   return parts.join("\n").trim();
+}
+
+function splitPromptResponse(text) {
+  const cleanText = String(text || "").trim();
+
+  if (!cleanText) {
+    return { prompt: "" };
+  }
+
+  const promptMatch = cleanText.match(/PROMPT_EN\s*:\s*([\s\S]*)$/i);
+  const analysisMatch = cleanText.match(/ANALYSIS_PL\s*:\s*([\s\S]*?)(?=\n\s*PROMPT_EN\s*:|$)/i);
+
+  return {
+    analysis: analysisMatch?.[1]?.trim() || "",
+    prompt: (promptMatch?.[1] || cleanText).trim(),
+  };
+}
+
+function buildPromptGeneratorInstruction({
+  rules,
+  userRequest,
+  outputResolution,
+  framingMode,
+  presetIds,
+  fileName,
+}) {
+  const portalInstruction =
+    framingMode === "portal"
+      ? "The final prompt may ask for a horizontal real estate portal format, but it must forbid inventing new room content, extending the scene with fake architecture, changing perspective or changing the true layout."
+      : "The final prompt must preserve the original framing and aspect ratio as closely as possible. It may ask for technical straightening, but not for a new composition.";
+
+  return [
+    "Jesteś ekspertem od promptów do edycji zdjęć nieruchomości w ChatGPT.",
+    "Obejrzyj przesłane zdjęcie i przygotuj gotowy, rozbudowany prompt po angielsku do wklejenia w ChatGPT razem z tym samym zdjęciem.",
+    "To NIE jest redesign wnętrza. To ma być instrukcja do profesjonalnego retuszu zdjęcia nieruchomości 1:1.",
+    "",
+    "NAJWAŻNIEJSZA ZASADA:",
+    "Zdjęcie wejściowe jest jedynym źródłem prawdy. Prompt ma zablokować zmianę mieszkania, geometrii, układu, okien, mebli, lamp, blatów, kafelków, fug, podłogi i proporcji.",
+    "",
+    "W finalnym promptcie po angielsku koniecznie uwzględnij:",
+    "- rozpoznany typ pomieszczenia;",
+    "- konkretne elementy widoczne na zdjęciu, które trzeba zachować dokładnie w tych samych miejscach;",
+    "- dokładny zakaz zmiany układu okien, liczby okien, rozmiaru okien, położenia okien i widoku przez okna;",
+    "- dokładny zakaz przesuwania, wymiany, powiększania, pomniejszania, prostowania, pogrubiania lub usuwania mebli i stałego wyposażenia;",
+    "- dokładny zakaz zmiany kuchni, łazienki, blatów, frontów, kafelków, fug, armatury, AGD, grzejników i zabudów;",
+    "- dokładny zakaz dodawania, usuwania albo zmiany lamp, kinkietów, plafonów, LED-ów, lampek nocnych i punktów świetlnych;",
+    "- sprzątanie tylko rzeczy osobistych, bałaganu, kabli, kosmetyków, detergentów, papierów, ubrań, naczyń, jedzenia, butelek i przypadkowych dodatków;",
+    "- odtworzenie odsłoniętego tła tylko na podstawie bezpośredniego otoczenia, bez zmiany wzoru materiału;",
+    "- jeśli są białe ściany, mogą wyglądać świeżo i śnieżnobiało #FFFFFF; jeśli ściany są inne, zachować ich dokładny kolor;",
+    "- jeśli sufit jest biały, ma być śnieżnobiały #FFFFFF, czysty i równomiernie oświetlony;",
+    "- jeśli jest łóżko, ma być równo pościelone, ale bez zmiany rozmiaru, ramy, zagłówka i położenia;",
+    "- więcej naturalnego światła dziennego wyłącznie przez ekspozycję, balans bieli i istniejące okna;",
+    "- minimalną korektę pionów, obiektywu, ekspozycji, ostrości, redukcji szumu i mikro-kontrastu;",
+    "- efekt premium real estate catalog / luxury architectural photography, ale ultra-fotorealistyczny i nadal ta sama nieruchomość;",
+    "- zakaz HDR, CGI, renderingu, fałszywej architektury, fałszywego słońca, nowych cieni, nowych mebli, nowych lamp i fantazyjnego wnętrza.",
+    "",
+    "Nie zgaduj elementów, których nie widać. Jeśli coś jest niepewne, w promptcie użyj neutralnej formy typu 'if visible' albo skup się na elementach pewnych.",
+    "Nie dodawaj home stagingu, jeśli użytkownik wyraźnie o to nie poprosił. Jeśli poprosił, ogranicz go do kilku małych, naturalnych dodatków bez zmiany układu i bez nowych lamp.",
+    "",
+    "DANE Z APLIKACJI:",
+    `Nazwa pliku: ${fileName}.`,
+    `Wybór użytkownika / opis celu: ${userRequest || "brak dodatkowego opisu; wykonaj wierny retusz 1:1 i profesjonalne sprzątanie zdjęcia"}.`,
+    `Docelowy rozmiar opisowy: ${outputResolution || "4k"}.`,
+    `Tryb kadru: ${framingMode || "original"}. ${portalInstruction}`,
+    `Aktywne tryby aplikacji: ${presetIds || "faithful, clean, catalog"}.`,
+    "",
+    "STAŁE ZASADY APLIKACJI:",
+    rules || "Brak dodatkowych zasad poza twardym zachowaniem 1:1.",
+    "",
+    "FORMAT ODPOWIEDZI:",
+    "Zwróć dokładnie dwie sekcje:",
+    "ANALYSIS_PL: krótko po polsku, 4-7 punktów, co rozpoznajesz na zdjęciu i czego trzeba pilnować.",
+    "PROMPT_EN: kompletny prompt po angielsku do skopiowania do ChatGPT. Ma być rozbudowany, konkretny, gotowy do użycia, bez komentarzy poza promptem.",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildAnalysisInstruction(rules) {
