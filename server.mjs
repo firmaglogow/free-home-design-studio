@@ -1037,6 +1037,8 @@ function buildListingCopyInstruction({ rawData, extraNotes, imageCount }) {
     "Po opisie podaj sekcję: Sugestie tytułów.",
     "Daj 4-6 mocnych propozycji tytułów, każda w osobnej linii.",
     "Tytuły mogą być bardziej agresywne i sprzedażowe, ale nie mogą zawierać numeru telefonu.",
+    "Sugestie tytułów pisz normalną pisownią, bez CAPS LOCKA. Nie używaj samych wielkich liter w tytułach, bo portale mogą tego nie lubić.",
+    "W tytułach wielką literą zaczynaj tylko zdanie, nazwy własne i skróty, np. Głogów, Piastów Śląskich, m2.",
     "",
     "MARKETPLACE I GRUPY FACEBOOK",
     "Po tytułach podaj sekcję: Skrócona wersja na Marketplace.",
