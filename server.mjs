@@ -16,7 +16,8 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT ?? 5173);
 const imageModel = process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-1.5";
-const analysisModel = process.env.OPENAI_ANALYSIS_MODEL ?? "gpt-5.5";
+const promptModel = process.env.OPENAI_PROMPT_MODEL ?? "gpt-5.4-mini";
+const analysisModel = process.env.OPENAI_ANALYSIS_MODEL ?? promptModel;
 const outputDir = path.join(__dirname, ".generated");
 const outputSizes = {
   "1k": { id: "1k", width: 1536, height: 1024, longEdge: 1536 },
@@ -178,7 +179,7 @@ app.post("/api/photo-analysis", upload.single("image"), async (request, response
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: analysisModel,
+        model: promptModel,
         max_output_tokens: 700,
         input: [
           {
@@ -253,7 +254,7 @@ app.post("/api/photo-prompt", upload.single("image"), async (request, response) 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: analysisModel,
+        model: promptModel,
         max_output_tokens: 2200,
         input: [
           {
@@ -873,6 +874,9 @@ function buildPromptGeneratorInstruction({
     "- dokładny zakaz zmiany układu okien, liczby okien, rozmiaru okien, położenia okien i widoku przez okna;",
     "- dokładny zakaz przesuwania, wymiany, powiększania, pomniejszania, prostowania, pogrubiania lub usuwania mebli i stałego wyposażenia;",
     "- dokładny zakaz zmiany kuchni, łazienki, blatów, frontów, kafelków, fug, armatury, AGD, grzejników i zabudów;",
+    "- jeśli widać lodówkę, zamrażarkę, piekarnik, zmywarkę, pralkę albo inne AGD, prompt musi zablokować ich dokładny kształt, szerokość, wysokość, głębokość, fronty, szczeliny drzwi, uchwyty, panele, proporcje i położenie;",
+    "- lodówka i AGD mogą wyglądać czysto, ostro i premium, ale nie mogą zostać przerysowane, wymienione, poszerzone, zwężone, przesunięte, uproszczone ani zamienione na inny model;",
+    "- drzwi lodówki, szafek, zmywarki, pralki lub piekarnika wolno zamknąć, otworzyć albo przestawić tylko wtedy, gdy użytkownik wyraźnie o to poprosi;",
     "- dokładny zakaz dodawania, usuwania albo zmiany lamp, kinkietów, plafonów, LED-ów, lampek nocnych i punktów świetlnych;",
     "- sprzątanie tylko rzeczy osobistych, bałaganu, kabli, kosmetyków, detergentów, papierów, ubrań, naczyń, jedzenia, butelek i przypadkowych dodatków;",
     "- odtworzenie odsłoniętego tła tylko na podstawie bezpośredniego otoczenia, bez zmiany wzoru materiału;",
