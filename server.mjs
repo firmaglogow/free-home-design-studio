@@ -309,6 +309,92 @@ app.post("/api/photo-prompt", upload.single("image"), async (request, response) 
   }
 });
 
+app.post("/api/listing-copy", upload.array("images", 8), async (request, response) => {
+  try {
+    const apiKey = getOpenAIKey();
+
+    if (!apiKey) {
+      response.status(503).json({
+        error:
+          "Na stronie online nie ma ustawionego OPENAI_API_KEY. Dodaj klucz w ustawieniach hostingu jako zmienną środowiskową i uruchom/deployuj aplikację ponownie.",
+      });
+      return;
+    }
+
+    const rawData = String(request.body?.rawData ?? "").trim();
+    const extraNotes = String(request.body?.extraNotes ?? "").trim();
+    const files = Array.isArray(request.files) ? request.files : [];
+
+    if (!rawData && !files.length) {
+      response.status(400).json({
+        error: "Wpisz dane nieruchomości albo dodaj zdjęcia.",
+      });
+      return;
+    }
+
+    const content = [
+      {
+        type: "input_text",
+        text: buildListingCopyInstruction({
+          rawData,
+          extraNotes,
+          imageCount: files.length,
+        }),
+      },
+    ];
+
+    for (const file of files) {
+      content.push({
+        type: "input_image",
+        image_url: `data:${file.mimetype || "image/jpeg"};base64,${file.buffer.toString("base64")}`,
+        detail: "low",
+      });
+    }
+
+    const openaiResponse = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: promptModel,
+        max_output_tokens: 3200,
+        input: [
+          {
+            role: "user",
+            content,
+          },
+        ],
+      }),
+    });
+
+    const payload = await openaiResponse.json();
+
+    if (!openaiResponse.ok) {
+      response.status(openaiResponse.status).json({
+        error: extractOpenAIError(payload),
+      });
+      return;
+    }
+
+    const copy = extractResponseText(payload);
+
+    if (!copy) {
+      response.status(502).json({
+        error: "OpenAI nie zwróciło opisu ogłoszenia.",
+      });
+      return;
+    }
+
+    response.json({ copy });
+  } catch (error) {
+    response.status(500).json({
+      error: error instanceof Error ? error.message : "Nie udało się stworzyć opisu ogłoszenia.",
+    });
+  }
+});
+
 app.post("/api/photo-edits", upload.single("image"), async (request, response) => {
   try {
     if (!request.file) {
@@ -908,6 +994,86 @@ function buildPromptGeneratorInstruction({
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function buildListingCopyInstruction({ rawData, extraNotes, imageCount }) {
+  return [
+    "Jesteś dedykowanym asystentem copywritingu nieruchomości dla FREE HOME nieruchomości Głogów.",
+    "Twoje zadanie: zamienić surowe dane nieruchomości w gotowe do publikacji ogłoszenie, brzmiące profesjonalnie, konkretnie i sprzedażowo, ale bez sztucznych ozdobników.",
+    "",
+    "NAJWAŻNIEJSZE ZASADY STYLU",
+    "Pisz po polsku.",
+    "Pisz konkretnie, pewnie i sprzedażowo.",
+    "Nie używaj ozdobników typu: z duszą, azyl, marzenie, perełka, magia, wyjątkowy klimat, chyba że użytkownik wkleił takie słowo w danych.",
+    "Zachowuj słownictwo użytkownika możliwie wiernie, poprawiając pisownię, składnię, porządek i siłę sprzedażową.",
+    "Nie dopisuj faktów, których nie ma w danych lub których nie widać pewnie na zdjęciach.",
+    "Jeśli czegoś nie wiadomo, pomiń to zamiast zgadywać.",
+    "Nie podawaj numeru telefonu w żadnej sekcji.",
+    "",
+    "STAŁY SCHEMAT OPISU PORTALOWEGO",
+    "1. Najpierw nagłówek: mocny, sprzedażowy, wielkimi literami, przyciągający uwagę.",
+    "2. Następnie wstęp: krótko podsumuj metraż, typ nieruchomości, stan i potencjał.",
+    "3. Sekcja: Lokalizacja.",
+    "4. Sekcja: Rozkład i powierzchnia.",
+    "5. Sekcja: Wykończenie i stan techniczny.",
+    "6. Sekcja: Media i opłaty.",
+    "7. Sekcja: Dodatkowe informacje.",
+    "8. Stopka: FREE HOME nieruchomości Głogów + krótki CTA na prezentację.",
+    "",
+    "FORMAT GŁÓWNEGO OPISU",
+    "W głównym opisie portalowym nie używaj list wypunktowanych, kropek-list, myślników-list ani numeracji wewnątrz sekcji.",
+    "Nagłówki sekcji mogą być osobnymi liniami: Lokalizacja, Rozkład i powierzchnia, Wykończenie i stan techniczny, Media i opłaty, Dodatkowe informacje.",
+    "Po nagłówku sekcji pisz czystym tekstem akapitowym.",
+    "Nie pisz tekstu typu: Oto przygotowana oferta, Ogłoszenie według schematu, Jasne, poniżej.",
+    "",
+    "TYTUŁY",
+    "Po opisie podaj sekcję: Sugestie tytułów.",
+    "Daj 4-6 mocnych propozycji tytułów, każda w osobnej linii.",
+    "Tytuły mogą być bardziej agresywne i sprzedażowe, ale nie mogą zawierać numeru telefonu.",
+    "",
+    "MARKETPLACE I GRUPY FACEBOOK",
+    "Po tytułach podaj sekcję: Skrócona wersja na Marketplace.",
+    "Marketplace ma być krótki, konkretny, mięsisty i nastawiony na szybki odzew.",
+    "W Marketplace NIE WOLNO podawać numeru telefonu.",
+    "W Marketplace NIE WOLNO podawać nazwy biura, nazwy FREE HOME ani tekstu typu Biuro FREE HOME nieruchomości Głogów.",
+    "W Marketplace nie kończ stopką firmową. Zakończ neutralnym CTA typu: Zapraszam do kontaktu i prezentacji.",
+    "Po Marketplace podaj sekcję: Wersja na grupy Facebook.",
+    "Wersja na grupy Facebook również bez numeru telefonu, bez nazwy biura i bez FREE HOME.",
+    "",
+    "YOUTUBE",
+    "Na końcu podaj sekcję: Bonus YouTube.",
+    "Podaj tytuł filmu i krótki opis filmu.",
+    "Bez numeru telefonu.",
+    "",
+    "PRZYKŁAD STYLU 1",
+    "Dane: kompaktowe mieszkanie dwupokojowe w wieżowcu, nowa winda, 31,1 m2, do wprowadzenia, bez remontu, czynsz 560 zł, ul. Oriona, os. Kopernika, większość mebli zostaje, klatka po remoncie, kuchnia otwarta z salonem, sypialnia z balkonem, idealne na start lub inwestycyjnie.",
+    "Styl nagłówka: KOMPAKTOWE MIESZKANIE 31,1 M2 - 2 POKOJE PO REMONCIE, IDEALNE NA START LUB INWESTYCJĘ!",
+    "Styl opisu: rzeczowy, z sekcjami, bez list w głównym opisie, z podkreśleniem gotowości do wejścia, lokalizacji, nowej windy i potencjału inwestycyjnego.",
+    "",
+    "PRZYKŁAD STYLU 2",
+    "Dane: mieszkanie 84,30 m2, os. Piastów Śląskich, 2 piętro w bloku 4-piętrowym, 4 pokoje, 3 sypialnie, salon, kuchnia z jadalnią, łazienka i WC osobno, duży korytarz, balkon w płytkach, instalacja miedziana, okna drewniane szczelne, parkiet i płytki, sprzęt AGD, czynsz 1200 zł, odnowione 2 lata temu, dwustronne, 2 piwnice, 3 szafy w zabudowie.",
+    "Styl nagłówka: PRZESTRZEŃ I KOMFORT NA OSIEDLU PIASTÓW ŚLĄSKICH! 84,30 M2 - 4 POKOJE, DWUSTRONNY UKŁAD I GOTOWE DO ZAMIESZKANIA!",
+    "Styl opisu: rodzinny, konkretny, z naciskiem na układ, metraż, lokalizację, instalacje, dwustronność, piwnice i funkcjonalność.",
+    "",
+    "ZDJĘCIA",
+    imageCount
+      ? `Dołączono ${imageCount} zdjęć. Wykorzystaj je pomocniczo do rozpoznania atutów, układu i stanu, ale nie dopisuj elementów, których nie jesteś pewien.`
+      : "Nie dołączono zdjęć. Bazuj wyłącznie na danych użytkownika.",
+    "",
+    "DANE UŻYTKOWNIKA",
+    rawData || "Brak danych tekstowych.",
+    "",
+    "DODATKOWE UWAGI UŻYTKOWNIKA",
+    extraNotes || "Brak dodatkowych uwag.",
+    "",
+    "FORMAT ODPOWIEDZI",
+    "Zwróć tylko gotowy materiał do skopiowania, w tej kolejności:",
+    "Opis na portale",
+    "Sugestie tytułów",
+    "Skrócona wersja na Marketplace",
+    "Wersja na grupy Facebook",
+    "Bonus YouTube",
+  ].join("\n");
 }
 
 function buildAnalysisInstruction(rules) {
