@@ -323,6 +323,8 @@ app.post("/api/listing-copy", upload.array("images", 8), async (request, respons
 
     const rawData = String(request.body?.rawData ?? "").trim();
     const extraNotes = String(request.body?.extraNotes ?? "").trim();
+    const listingTones = String(request.body?.listingTones ?? "").trim();
+    const listingDepth = String(request.body?.listingDepth ?? "full").trim();
     const files = Array.isArray(request.files) ? request.files : [];
 
     if (!rawData && !files.length) {
@@ -338,6 +340,8 @@ app.post("/api/listing-copy", upload.array("images", 8), async (request, respons
         text: buildListingCopyInstruction({
           rawData,
           extraNotes,
+          listingTones,
+          listingDepth,
           imageCount: files.length,
         }),
       },
@@ -359,7 +363,7 @@ app.post("/api/listing-copy", upload.array("images", 8), async (request, respons
       },
       body: JSON.stringify({
         model: promptModel,
-        max_output_tokens: 4600,
+        max_output_tokens: 6800,
         input: [
           {
             role: "user",
@@ -996,7 +1000,7 @@ function buildPromptGeneratorInstruction({
     .join("\n");
 }
 
-function buildListingCopyInstruction({ rawData, extraNotes, imageCount }) {
+function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listingDepth, imageCount }) {
   return [
     "Jesteś dedykowanym asystentem copywritingu nieruchomości dla FREE HOME nieruchomości Głogów.",
     "Twoje zadanie: zamienić surowe dane nieruchomości w gotowe do publikacji ogłoszenie, brzmiące profesjonalnie, konkretnie i sprzedażowo, ale bez sztucznych ozdobników.",
@@ -1013,8 +1017,18 @@ function buildListingCopyInstruction({ rawData, extraNotes, imageCount }) {
     "Jeśli czegoś nie wiadomo, pomiń to zamiast zgadywać.",
     "Nie podawaj numeru telefonu w żadnej sekcji.",
     "",
+    "USTAWIENIA Z APLIKACJI",
+    `Aktywne style: ${listingTones || "concrete,sales,premium"}.`,
+    `Zakres odpowiedzi: ${listingDepth || "full"}.`,
+    "concrete = fakty, porządek, konkrety i brak ozdobników.",
+    "sales = mocniejsze argumenty sprzedażowe, lepsze CTA i większa energia.",
+    "premium = bardziej elegancki język, ale bez pustych luksusowych fraz.",
+    "investment = podkreśl najem, lokatę kapitału, łatwość wynajmu i potencjał inwestycyjny tylko jeśli wynika to z danych.",
+    "family = podkreśl wygodę codziennego życia, układ, szkoły, przedszkola i funkcjonalność tylko jeśli wynika to z danych.",
+    "standard = zwięźlej, full = pełny materiał domyślny, max = najbardziej rozbudowane warianty bez lania wody.",
+    "",
     "DŁUGOŚĆ I GĘSTOŚĆ OPISU",
-    "Główny opis portalowy ma być wyraźnie bardziej rozbudowany: zwykle 2200-3600 znaków, jeśli użytkownik podał wystarczająco dużo danych.",
+    "Główny opis portalowy ma być wyraźnie bardziej rozbudowany: zwykle 2200-3600 znaków, jeśli użytkownik podał wystarczająco dużo danych. Dla zakresu max może być dłuższy, ale nadal konkretny.",
     "Jeśli danych jest mało, nie wymyślaj. Rozwiń wtedy tylko pewne informacje i napisz zwięźlej, ale nadal profesjonalnie.",
     "Wstęp po mocnym nagłówku ma mieć 2-3 pełne zdania, które od razu tłumaczą, dla kogo jest oferta i jaki jest jej największy atut.",
     "Sekcja Lokalizacja ma mieć 2-4 zdania i opisywać praktyczną wygodę życia: komunikację, sklepy, szkoły, usługi, otoczenie, jeśli wynika to z danych lub jest pewnie podane.",
@@ -1047,6 +1061,15 @@ function buildListingCopyInstruction({ rawData, extraNotes, imageCount }) {
     "Po nagłówku sekcji pisz czystym tekstem akapitowym, nie listą.",
     "Nie pisz tekstu typu: Oto przygotowana oferta, Ogłoszenie według schematu, Jasne, poniżej.",
     "",
+    "KONTROLA DANYCH I PYTANIA",
+    "Na początku odpowiedzi dodaj sekcję: Kontrola danych.",
+    "Kontrola danych ma być praktycznym audytem przed publikacją. Wypisz krótko: co jest gotowe, co jest mocnym atutem, czego brakuje i co warto doprecyzować.",
+    "Nie wymyślaj brakujących informacji. Jeżeli brakuje piętra, ogrzewania, formy własności, piwnicy, balkonu, czynszu, metrażu, stanu prawnego, terminu wydania albo wyposażenia, wskaż to jako brak do uzupełnienia.",
+    "Po kontroli dodaj sekcję: Pytania do właściciela.",
+    "Pytania mają być gotowe do wysłania właścicielowi lub do zadania na spotkaniu. Maksymalnie 8-12 pytań, tylko jeśli mają sens przy tych danych.",
+    "Po pytaniach dodaj sekcję: Atuty ze zdjęć.",
+    "Jeśli są zdjęcia, wypisz pewne atuty widoczne na zdjęciach i elementy, których można użyć w opisie. Jeśli zdjęć nie ma, napisz krótko: Nie dołączono zdjęć - sekcja do uzupełnienia po analizie fotografii.",
+    "",
     "TYTUŁY",
     "Po opisie podaj sekcję: Sugestie tytułów.",
     "Daj 4-6 mocnych propozycji tytułów, każda w osobnej linii.",
@@ -1063,6 +1086,16 @@ function buildListingCopyInstruction({ rawData, extraNotes, imageCount }) {
     "Po Marketplace podaj sekcję: Wersja na grupy Facebook.",
     "Wersja na grupy Facebook również bez numeru telefonu, bez nazwy biura i bez FREE HOME.",
     "Wersja na grupy Facebook może być minimalnie luźniejsza i bardziej dynamiczna niż portal, ale nadal bez przesady, bez krzyku i bez sztucznych obietnic.",
+    "Po wersji Facebook dodaj sekcję: Post social media.",
+    "Post social media ma być gotowy do publikacji na profilu biura: 900-1400 znaków, konkretny, z lekką energią, bez numeru telefonu. Może zawierać 3-6 hashtagów na końcu, ale nie przesadzaj.",
+    "Po poście social dodaj sekcję: SMS do klienta.",
+    "SMS do klienta ma mieć 1-2 krótkie wiadomości do właściciela lub kupującego, bez numeru telefonu, naturalne i konkretne.",
+    "Po SMS dodaj sekcję: Opis pod rolkę.",
+    "Opis pod rolkę ma być krótki, dynamiczny, gotowy pod Instagram/Facebook Reels, z 3-5 hashtagami.",
+    "Po opisie rolki dodaj sekcję: Scenariusz rolki.",
+    "Scenariusz rolki ma zawierać krótki plan ujęć oraz tekst lektora. Nie używaj numeracji, jeśli da się napisać to jako krótkie linie akapitowe.",
+    "Po scenariuszu rolki dodaj sekcję: Karta oferty dla właściciela.",
+    "Karta oferty dla właściciela ma być eleganckim podsumowaniem pracy agenta: mocne strony nieruchomości, plan promocji, co warto podkreślić podczas prezentacji i krótkie podsumowanie potencjału.",
     "",
     "YOUTUBE",
     "Na końcu podaj sekcję: Bonus YouTube.",
@@ -1092,10 +1125,18 @@ function buildListingCopyInstruction({ rawData, extraNotes, imageCount }) {
     "",
     "FORMAT ODPOWIEDZI",
     "Zwróć tylko gotowy materiał do skopiowania, w tej kolejności:",
+    "**Kontrola danych**",
+    "**Pytania do właściciela**",
+    "**Atuty ze zdjęć**",
     "**Opis na portale**",
     "**Sugestie tytułów**",
     "**Skrócona wersja na Marketplace**",
     "**Wersja na grupy Facebook**",
+    "**Post social media**",
+    "**SMS do klienta**",
+    "**Opis pod rolkę**",
+    "**Scenariusz rolki**",
+    "**Karta oferty dla właściciela**",
     "**Bonus YouTube**",
     "Nie dodawaj pustej linii między pogrubionym nagłówkiem podsekcji a opisem pod nim.",
   ].join("\n");
