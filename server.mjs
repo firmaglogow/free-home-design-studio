@@ -15,9 +15,11 @@ dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT ?? 5173);
+const economyTextModel = process.env.OPENAI_TEXT_MODEL ?? "gpt-5.4-nano";
 const imageModel = process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-1.5";
-const promptModel = process.env.OPENAI_PROMPT_MODEL ?? "gpt-5.4-mini";
-const analysisModel = process.env.OPENAI_ANALYSIS_MODEL ?? promptModel;
+const promptModel = process.env.OPENAI_PROMPT_MODEL ?? economyTextModel;
+const analysisModel = process.env.OPENAI_ANALYSIS_MODEL ?? economyTextModel;
+const listingModel = process.env.OPENAI_LISTING_MODEL ?? economyTextModel;
 const outputDir = path.join(__dirname, ".generated");
 const listingMemoryPath = path.join(outputDir, "listing-memory.json");
 const managedUsersPath = path.join(outputDir, "app-users.json");
@@ -583,7 +585,7 @@ app.post("/api/photo-analysis", upload.single("image"), async (request, response
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: promptModel,
+        model: analysisModel,
         max_output_tokens: 700,
         input: [
           {
@@ -768,7 +770,7 @@ app.post("/api/listing-copy", upload.array("images", 8), async (request, respons
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: promptModel,
+        model: listingModel,
         max_output_tokens: 6800,
         input: [
           {
