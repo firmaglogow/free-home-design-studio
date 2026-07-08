@@ -20,6 +20,7 @@ const promptModel = process.env.OPENAI_PROMPT_MODEL ?? "gpt-5.4-mini";
 const analysisModel = process.env.OPENAI_ANALYSIS_MODEL ?? promptModel;
 const outputDir = path.join(__dirname, ".generated");
 const listingMemoryPath = path.join(outputDir, "listing-memory.json");
+const managedUsersPath = path.join(outputDir, "app-users.json");
 const outputSizes = {
   "1k": { id: "1k", width: 1536, height: 1024, longEdge: 1536 },
   "2k": { id: "2k", width: 2400, height: 1600, longEdge: 2400 },
@@ -34,15 +35,15 @@ app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 const APP_KEY = String(process.env.APP_KEY ?? "").trim();
 const APP_PASS = String(process.env.APP_PASS ?? "").trim();
 const APP_USER = String(process.env.APP_USER ?? "freehome").trim();
+const APP_ADMINS = String(process.env.APP_ADMINS ?? "").trim();
 const URL_SECRET = APP_KEY || APP_PASS;
 const AUTH_USERS = parseAuthUsers();
-const AUTH_ON = Boolean(AUTH_USERS.length || APP_KEY);
+let managedAuthUsers = readManagedAuthUsersSync();
+const AUTH_ON = Boolean(AUTH_USERS.length || managedAuthUsers.length || APP_KEY);
 const FRAME_ANCESTORS = process.env.FRAME_ANCESTORS ?? "'self' https://crm.freehome.pl";
 const AUTH_COOKIE = "foto_auth";
 const LEGACY_AUTH_TOKEN = APP_PASS ? createHash("sha256").update(`foto-auth|${APP_KEY}|${APP_PASS}`).digest("hex") : "";
-const URL_AUTH_USER = AUTH_USERS[0] ?? (APP_KEY ? { username: "crm", password: APP_KEY } : undefined);
-const TOKEN_USERS = AUTH_USERS.length ? AUTH_USERS : URL_AUTH_USER ? [URL_AUTH_USER] : [];
-const AUTH_TOKEN_BY_VALUE = new Map(TOKEN_USERS.map((user) => [createAuthToken(user), user.username]));
+const URL_AUTH_USER = getAuthUsers()[0] ?? (APP_KEY ? { username: "crm", password: APP_KEY, source: "url" } : undefined);
 const URL_AUTH_TOKEN = URL_AUTH_USER ? createAuthToken(URL_AUTH_USER) : "";
 
 function normalizeUsername(value) {
@@ -65,7 +66,7 @@ function parseAuthUsers() {
     }
 
     seen.add(normalizedUsername);
-    users.push({ username: normalizedUsername, password: normalizedPassword });
+    users.push({ username: normalizedUsername, password: normalizedPassword, source: "env" });
   }
 
   const rawUsers = String(process.env.APP_USERS ?? "").trim();
@@ -112,7 +113,123 @@ function parseAuthUsers() {
 }
 
 function createAuthToken(user) {
-  return createHash("sha256").update(`foto-auth|${APP_KEY}|${user.username}|${user.password}`).digest("hex");
+  return createHash("sha256")
+    .update(`foto-auth|${APP_KEY}|${user.username}|${getUserCredentialFingerprint(user)}`)
+    .digest("hex");
+}
+
+function getUserCredentialFingerprint(user) {
+  return String(user.passwordHash || user.password || "");
+}
+
+function getAdminUsernames() {
+  const usernames = new Set(["freehome", "grzegorz", "crm", normalizeUsername(APP_USER)].filter(Boolean));
+
+  APP_ADMINS.split(/[\n,;]+/)
+    .map(normalizeUsername)
+    .filter(Boolean)
+    .forEach((username) => usernames.add(username));
+
+  return usernames;
+}
+
+function getUserRole(user) {
+  const explicitRole = String(user.role || "").toLowerCase();
+
+  if (explicitRole === "admin" || getAdminUsernames().has(user.username)) {
+    return "admin";
+  }
+
+  return "agent";
+}
+
+function getAuthUsers() {
+  const usersByName = new Map();
+
+  for (const user of AUTH_USERS) {
+    usersByName.set(user.username, { ...user, role: getUserRole(user) });
+  }
+
+  for (const user of managedAuthUsers) {
+    usersByName.set(user.username, { ...user, role: getUserRole(user), source: "managed" });
+  }
+
+  return [...usersByName.values()];
+}
+
+function isAdminUsername(username) {
+  const normalizedUsername = normalizeUsername(username);
+  const user = getAuthUsers().find((item) => item.username === normalizedUsername);
+
+  return Boolean(user && getUserRole(user) === "admin");
+}
+
+function hashManagedPassword(password, salt = randomUUID()) {
+  const passwordHash = createHash("sha256")
+    .update(`photo-crm-user-password|${salt}|${String(password)}`)
+    .digest("hex");
+
+  return { salt, passwordHash };
+}
+
+function verifyManagedPassword(user, password) {
+  const { passwordHash } = hashManagedPassword(password, user.salt);
+
+  return safeEqual(passwordHash, user.passwordHash);
+}
+
+function readManagedAuthUsersSync() {
+  if (!existsSync(managedUsersPath)) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(managedUsersPath, "utf8"));
+    const items = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.users) ? parsed.users : [];
+
+    return items
+      .map((item) => ({
+        username: normalizeUsername(item?.username ?? item?.login ?? item?.user),
+        passwordHash: String(item?.passwordHash || ""),
+        salt: String(item?.salt || ""),
+        role: String(item?.role || "agent").toLowerCase() === "admin" ? "admin" : "agent",
+        createdAt: String(item?.createdAt || ""),
+        updatedAt: String(item?.updatedAt || ""),
+        source: "managed",
+      }))
+      .filter((item) => item.username && item.passwordHash && item.salt);
+  } catch {
+    return [];
+  }
+}
+
+async function writeManagedAuthUsers(users) {
+  await mkdir(outputDir, { recursive: true });
+  await writeFile(
+    managedUsersPath,
+    JSON.stringify(
+      users.map((user) => ({
+        username: user.username,
+        passwordHash: user.passwordHash,
+        salt: user.salt,
+        role: getUserRole(user),
+        createdAt: user.createdAt || "",
+        updatedAt: user.updatedAt || "",
+      })),
+      null,
+      2,
+    ),
+    "utf8",
+  );
+}
+
+function publicAuthUser(user) {
+  return {
+    username: String(user.username || ""),
+    role: getUserRole(user),
+    source: String(user.source || "env"),
+    updatedAt: String(user.updatedAt || ""),
+  };
 }
 
 function safeEqual(a, b) {
@@ -144,29 +261,40 @@ function setAuthCookie(request, response, token) {
   );
 }
 
-function getAuthenticatedUsername(cookieValue) {
+function getAuthenticatedUser(cookieValue) {
   const value = String(cookieValue || "");
 
-  for (const [token, username] of AUTH_TOKEN_BY_VALUE.entries()) {
-    if (safeEqual(value, token)) {
-      return username;
+  if (!value) {
+    return undefined;
+  }
+
+  for (const user of getAuthUsers()) {
+    if (safeEqual(value, createAuthToken(user))) {
+      return user;
     }
   }
 
   if (LEGACY_AUTH_TOKEN && safeEqual(value, LEGACY_AUTH_TOKEN)) {
-    return APP_USER || "freehome";
+    const username = normalizeUsername(APP_USER || "freehome");
+    return getAuthUsers().find((user) => user.username === username) ?? { username, source: "legacy" };
   }
 
-  return "";
+  return undefined;
 }
 
 function findAuthUser(login, password) {
   const normalizedLogin = normalizeUsername(login);
   const candidates = normalizedLogin
-    ? AUTH_USERS.filter((user) => user.username === normalizedLogin)
-    : AUTH_USERS;
+    ? getAuthUsers().filter((user) => user.username === normalizedLogin)
+    : getAuthUsers();
 
-  return candidates.find((user) => safeEqual(password, user.password));
+  return candidates.find((user) => {
+    if (user.passwordHash) {
+      return verifyManagedPassword(user, password);
+    }
+
+    return safeEqual(password, user.password);
+  });
 }
 
 function loginPage(hasError) {
@@ -198,15 +326,18 @@ app.use((request, response, next) => {
   response.setHeader("Referrer-Policy", "no-referrer");
 
   if (!AUTH_ON) {
+    request.currentUser = APP_USER || "freehome";
+    request.currentUserRole = "admin";
     next();
     return;
   }
 
   const cookies = readCookies(request.headers.cookie);
-  const authenticatedUsername = getAuthenticatedUsername(cookies[AUTH_COOKIE]);
+  const authenticatedUser = getAuthenticatedUser(cookies[AUTH_COOKIE]);
 
-  if (authenticatedUsername) {
-    request.currentUser = authenticatedUsername;
+  if (authenticatedUser) {
+    request.currentUser = authenticatedUser.username;
+    request.currentUserRole = getUserRole(authenticatedUser);
     next();
     return;
   }
@@ -221,6 +352,7 @@ app.use((request, response, next) => {
 
   if (URL_SECRET && urlKey && safeEqual(urlKey, URL_SECRET) && URL_AUTH_TOKEN) {
     request.currentUser = URL_AUTH_USER.username;
+    request.currentUserRole = getUserRole(URL_AUTH_USER);
     setAuthCookie(request, response, URL_AUTH_TOKEN);
     next();
     return;
@@ -289,7 +421,76 @@ function publicListingMemoryItem(item) {
 }
 
 app.get("/api/auth/me", (request, response) => {
-  response.json({ user: request.currentUser || "" });
+  const username = request.currentUser || "";
+  const role = request.currentUserRole || (isAdminUsername(username) ? "admin" : "agent");
+  response.json({
+    user: username,
+    role,
+    isAdmin: role === "admin" || isAdminUsername(username),
+  });
+});
+
+function requireAdmin(request, response, next) {
+  if (request.currentUserRole !== "admin" && !isAdminUsername(request.currentUser)) {
+    response.status(403).json({ error: "Tylko administrator może zarządzać profilami agentów." });
+    return;
+  }
+
+  next();
+}
+
+app.get("/api/admin/users", requireAdmin, (request, response) => {
+  response.json({
+    currentUser: publicAuthUser({ username: request.currentUser, role: request.currentUserRole || "agent" }),
+    users: getAuthUsers().map(publicAuthUser).sort((first, second) => first.username.localeCompare(second.username)),
+  });
+});
+
+app.post("/api/admin/users", requireAdmin, async (request, response) => {
+  try {
+    const username = normalizeUsername(request.body?.username);
+    const password = String(request.body?.password ?? "").trim();
+    const role = String(request.body?.role ?? "agent").toLowerCase() === "admin" ? "admin" : "agent";
+
+    if (!/^[a-z0-9._-]{2,32}$/.test(username)) {
+      response.status(400).json({ error: "Login może mieć 2-32 znaki: litery, cyfry, kropka, myślnik lub podkreślenie." });
+      return;
+    }
+
+    if (password.length < 6) {
+      response.status(400).json({ error: "Hasło musi mieć minimum 6 znaków." });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const managedUsers = readManagedAuthUsersSync();
+    const existingIndex = managedUsers.findIndex((user) => user.username === username);
+    const existingUser = existingIndex > -1 ? managedUsers[existingIndex] : undefined;
+    const { salt, passwordHash } = hashManagedPassword(password);
+    const nextUser = {
+      username,
+      passwordHash,
+      salt,
+      role,
+      createdAt: existingUser?.createdAt || now,
+      updatedAt: now,
+      source: "managed",
+    };
+    const nextUsers =
+      existingIndex > -1
+        ? managedUsers.map((user, index) => (index === existingIndex ? nextUser : user))
+        : [...managedUsers, nextUser];
+
+    await writeManagedAuthUsers(nextUsers);
+    managedAuthUsers = nextUsers;
+
+    response.json({
+      user: publicAuthUser(nextUser),
+      users: getAuthUsers().map(publicAuthUser).sort((first, second) => first.username.localeCompare(second.username)),
+    });
+  } catch (error) {
+    response.status(500).json({ error: "Nie udało się zapisać profilu agenta." });
+  }
 });
 
 app.get("/api/listing-memory", async (request, response) => {
