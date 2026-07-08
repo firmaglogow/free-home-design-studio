@@ -1102,7 +1102,7 @@ function buildPortalEditPrompt(userPrompt, framingMode) {
   const framingInstruction =
     framingMode === "portal"
       ? "- Kadr może być przygotowany jako poziomy 3:2 na portale, ale nie wolno wymyślać nowych fragmentów mieszkania ani zmieniać geometrii wnętrza, żeby wypełnić kadr."
-      : "- Zachowaj oryginalny kadr i proporcje zdjęcia możliwie 1:1. Nie rozszerzaj sceny, nie dorysowuj boków i nie kadruj tak, żeby zmienić odbiór układu.";
+      : "- Zachowaj oryginalne płótno zdjęcia, orientację, kadr, proporcje i widoczne granice dokładnie 1:1. Wybrana jakość wyjściowa nie jest zgodą na zmianę formatu. Nie zmieniaj wymiarów kadru, nie przycinaj pokoju, nie rozszerzaj sceny, nie dorysowuj boków, nie obracaj, nie rób poziomu z pionu, pionu z poziomu, kwadratu, panoramy ani formatu 3:2, chyba że użytkownik wyraźnie poprosił o taki konkretny format. Delikatne wyrównanie techniczne jest dozwolone tylko jak wypoziomowanie aparatu na statywie i nie może zauważalnie zmienić kompozycji ani rozmiaru obiektów.";
 
   return [
     userPrompt,
@@ -1354,7 +1354,7 @@ function buildPromptGeneratorInstruction({
   const portalInstruction =
     framingMode === "portal"
       ? "The final prompt may ask for a horizontal real estate portal format, but it must forbid inventing new room content, extending the scene with fake architecture, changing perspective or changing the true layout."
-      : "The final prompt must preserve the original framing and aspect ratio as closely as possible. It may ask for technical straightening, but not for a new composition.";
+      : "The final prompt must preserve the original canvas, output dimensions, orientation, framing and aspect ratio exactly. It may ask for very slight technical straightening like a tripod-level correction, but not for resizing, cropping, extending the scene, changing portrait/landscape orientation or creating a new composition.";
 
   return [
     "Jesteś ekspertem od promptów do edycji zdjęć nieruchomości w ChatGPT.",
@@ -1363,6 +1363,8 @@ function buildPromptGeneratorInstruction({
     "",
     "NAJWAŻNIEJSZA ZASADA:",
     "Zdjęcie wejściowe jest jedynym źródłem prawdy. Prompt ma zablokować zmianę mieszkania, geometrii, układu, okien, mebli, lamp, blatów, kafelków, fug, podłogi i proporcji.",
+    "Domyślnie prompt ma też zablokować zmianę formatu samego zdjęcia: ten sam rozmiar płótna, ta sama orientacja, te same proporcje, ten sam widoczny kadr. Nie wolno robić zdjęcia poziomego z pionowego, pionowego z poziomego, kwadratu, panoramy, formatu 3:2 ani innego przekadrowania, chyba że użytkownik wyraźnie o to poprosi.",
+    "Dozwolona jest tylko bardzo delikatna korekta techniczna kadru, jak wyrównanie aparatu na statywie. Nie może ona zauważalnie przycinać pokoju, zmieniać rozmiaru obiektów, perspektywy, ogniskowej ani kompozycji.",
     "",
     "W finalnym promptcie po angielsku koniecznie uwzględnij:",
     "- rozpoznany typ pomieszczenia;",
@@ -1390,7 +1392,7 @@ function buildPromptGeneratorInstruction({
     "DANE Z APLIKACJI:",
     `Nazwa pliku: ${fileName}.`,
     `Wybór użytkownika / opis celu: ${userRequest || "brak dodatkowego opisu; wykonaj wierny retusz 1:1 i profesjonalne sprzątanie zdjęcia"}.`,
-    `Docelowy rozmiar opisowy: ${outputResolution || "4k"}.`,
+    `Docelowy rozmiar opisowy: ${outputResolution || "4k"} - traktuj to wyłącznie jako poziom jakości, nie jako zgodę na zmianę proporcji, orientacji, płótna ani kadru.`,
     `Tryb kadru: ${framingMode || "original"}. ${portalInstruction}`,
     `Aktywne tryby aplikacji: ${presetIds || "faithful, clean, catalog"}.`,
     "",
