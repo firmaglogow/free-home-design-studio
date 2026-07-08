@@ -528,6 +528,7 @@ app.post("/api/listing-copy", upload.array("images", 8), async (request, respons
     const extraNotes = String(request.body?.extraNotes ?? "").trim();
     const listingTones = String(request.body?.listingTones ?? "").trim();
     const listingDepth = String(request.body?.listingDepth ?? "full").trim();
+    const propertyType = String(request.body?.propertyType ?? "apartment").trim();
     const files = Array.isArray(request.files) ? request.files : [];
 
     if (!rawData && !files.length) {
@@ -545,6 +546,7 @@ app.post("/api/listing-copy", upload.array("images", 8), async (request, respons
           extraNotes,
           listingTones,
           listingDepth,
+          propertyType,
           imageCount: files.length,
         }),
       },
@@ -1203,7 +1205,16 @@ function buildPromptGeneratorInstruction({
     .join("\n");
 }
 
-function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listingDepth, imageCount }) {
+function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listingDepth, propertyType, imageCount }) {
+  const propertyTypeLabel =
+    {
+      apartment: "mieszkanie",
+      house: "dom",
+      commercial: "lokal",
+      plot: "działka",
+      other: "inna nieruchomość",
+    }[propertyType] || "mieszkanie";
+
   return [
     "Jesteś dedykowanym asystentem copywritingu nieruchomości dla FREE HOME nieruchomości Głogów.",
     "Twoje zadanie: zamienić surowe dane nieruchomości w gotowe do publikacji ogłoszenie, brzmiące profesjonalnie, konkretnie i sprzedażowo, ale bez sztucznych ozdobników.",
@@ -1221,6 +1232,7 @@ function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listin
     "Nie podawaj numeru telefonu w żadnej sekcji.",
     "",
     "USTAWIENIA Z APLIKACJI",
+    `Typ nieruchomości: ${propertyTypeLabel}.`,
     `Aktywne style: ${listingTones || "concrete,sales,premium"}.`,
     `Zakres odpowiedzi: ${listingDepth || "full"}.`,
     "concrete = fakty, porządek, konkrety i brak ozdobników.",
@@ -1237,7 +1249,11 @@ function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listin
     "Sekcja Lokalizacja ma mieć 2-4 zdania i opisywać praktyczną wygodę życia: komunikację, sklepy, szkoły, usługi, otoczenie, jeśli wynika to z danych lub jest pewnie podane.",
     "Sekcja Rozkład i powierzchnia ma mieć 3-5 zdań. Rozwiń funkcję każdego ważnego pomieszczenia, balkon, piwnice, układ dwustronny, piętro, windę i ergonomię, jeśli są w danych.",
     "Sekcja Wykończenie i stan techniczny ma mieć 3-5 zdań. Rozwiń stan mieszkania, instalacje, okna, podłogi, zabudowy, AGD, meble pozostające w cenie i gotowość do wejścia, jeśli są w danych.",
-    "Sekcja Media i opłaty ma mieć 1-3 zdania. Jeżeli jest tylko czynsz, podaj go konkretnie i bez dopisywania nieznanych mediów.",
+    "Sekcja Media i opłaty nie może wyglądać ubogo. Nie zostawiaj pojedynczego zdania typu: Czynsz wynosi 785 zł.",
+    "Dla mieszkania: jeśli użytkownik podał czynsz, napisz 2-4 konkretne zdania. Podaj kwotę jako miesięczny czynsz administracyjny i naturalnie wyjaśnij, że przy mieszkaniu są to opłaty związane z utrzymaniem lokalu, administracją i częściami wspólnymi. Jeżeli użytkownik podał składniki czynszu, wymień je. Jeżeli ich nie podał, nie udawaj pewności - napisz elegancko, że dokładny zakres czynszu, np. fundusz remontowy, eksploatacja, zaliczki na media lub ogrzewanie, warto potwierdzić przy prezentacji albo w dokumentach zarządcy.",
+    "Dla domu: nie używaj języka o czynszu administracyjnym, chyba że użytkownik go podał. Skup się na źródle ogrzewania, prądzie, wodzie, kanalizacji/szambie/przydomowej oczyszczalni, gazie, odpadach, podatku od nieruchomości i kosztach utrzymania, tylko jeśli są w danych.",
+    "Dla lokalu: rozdziel czynsz/najem od opłat eksploatacyjnych, mediów, VAT, kaucji lub kosztów administracyjnych, tylko jeśli są w danych.",
+    "Dla działki: opisz media przy działce lub w drodze, dojazd i ewentualne opłaty/podatki tylko wtedy, gdy wynikają z danych.",
     "Sekcja Dodatkowe informacje ma mieć 2-4 zdania i podsumować potencjał: dla rodziny, pary, singla, na start lub inwestycyjnie, tylko jeśli wynika to z danych.",
     "Unikaj pustych fraz typu komfortowy standard bez wyjaśnienia. Każde mocne słowo podeprzyj faktem z danych.",
     "",
