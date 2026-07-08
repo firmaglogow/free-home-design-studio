@@ -19,6 +19,7 @@ const imageModel = process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-1.5";
 const promptModel = process.env.OPENAI_PROMPT_MODEL ?? "gpt-5.4-mini";
 const analysisModel = process.env.OPENAI_ANALYSIS_MODEL ?? promptModel;
 const outputDir = path.join(__dirname, ".generated");
+const listingMemoryPath = path.join(outputDir, "listing-memory.json");
 const outputSizes = {
   "1k": { id: "1k", width: 1536, height: 1024, longEdge: 1536 },
   "2k": { id: "2k", width: 2400, height: 1600, longEdge: 2400 },
@@ -32,11 +33,87 @@ app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
 const APP_KEY = String(process.env.APP_KEY ?? "").trim();
 const APP_PASS = String(process.env.APP_PASS ?? "").trim();
+const APP_USER = String(process.env.APP_USER ?? "freehome").trim();
 const URL_SECRET = APP_KEY || APP_PASS;
-const AUTH_ON = Boolean(APP_PASS || APP_KEY);
+const AUTH_USERS = parseAuthUsers();
+const AUTH_ON = Boolean(AUTH_USERS.length || APP_KEY);
 const FRAME_ANCESTORS = process.env.FRAME_ANCESTORS ?? "'self' https://crm.freehome.pl";
 const AUTH_COOKIE = "foto_auth";
-const AUTH_TOKEN = AUTH_ON ? createHash("sha256").update(`foto-auth|${APP_KEY}|${APP_PASS}`).digest("hex") : "";
+const LEGACY_AUTH_TOKEN = APP_PASS ? createHash("sha256").update(`foto-auth|${APP_KEY}|${APP_PASS}`).digest("hex") : "";
+const URL_AUTH_USER = AUTH_USERS[0] ?? (APP_KEY ? { username: "crm", password: APP_KEY } : undefined);
+const TOKEN_USERS = AUTH_USERS.length ? AUTH_USERS : URL_AUTH_USER ? [URL_AUTH_USER] : [];
+const AUTH_TOKEN_BY_VALUE = new Map(TOKEN_USERS.map((user) => [createAuthToken(user), user.username]));
+const URL_AUTH_TOKEN = URL_AUTH_USER ? createAuthToken(URL_AUTH_USER) : "";
+
+function normalizeUsername(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+}
+
+function parseAuthUsers() {
+  const users = [];
+  const seen = new Set();
+
+  function addUser(username, password) {
+    const normalizedUsername = normalizeUsername(username || APP_USER || "freehome");
+    const normalizedPassword = String(password || "").trim();
+
+    if (!normalizedUsername || !normalizedPassword || seen.has(normalizedUsername)) {
+      return;
+    }
+
+    seen.add(normalizedUsername);
+    users.push({ username: normalizedUsername, password: normalizedPassword });
+  }
+
+  const rawUsers = String(process.env.APP_USERS ?? "").trim();
+
+  if (rawUsers) {
+    try {
+      const parsed = JSON.parse(rawUsers);
+
+      if (Array.isArray(parsed)) {
+        parsed.forEach((item) => {
+          if (typeof item === "string") {
+            const separatorIndex = item.indexOf(":") > -1 ? item.indexOf(":") : item.indexOf("=");
+            addUser(item.slice(0, separatorIndex), item.slice(separatorIndex + 1));
+            return;
+          }
+
+          if (item && typeof item === "object") {
+            addUser(item.login ?? item.username ?? item.user, item.password ?? item.pass);
+          }
+        });
+      } else if (parsed && typeof parsed === "object") {
+        Object.entries(parsed).forEach(([username, password]) => addUser(username, password));
+      }
+    } catch {
+      rawUsers
+        .split(/[\n,;]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .forEach((item) => {
+          const separatorIndex = item.indexOf(":") > -1 ? item.indexOf(":") : item.indexOf("=");
+
+          if (separatorIndex > 0) {
+            addUser(item.slice(0, separatorIndex), item.slice(separatorIndex + 1));
+          }
+        });
+    }
+  }
+
+  if (APP_PASS) {
+    addUser(APP_USER || "freehome", APP_PASS);
+  }
+
+  return users;
+}
+
+function createAuthToken(user) {
+  return createHash("sha256").update(`foto-auth|${APP_KEY}|${user.username}|${user.password}`).digest("hex");
+}
 
 function safeEqual(a, b) {
   const first = Buffer.from(String(a));
@@ -58,13 +135,38 @@ function readCookies(header) {
   return cookies;
 }
 
-function setAuthCookie(request, response) {
+function setAuthCookie(request, response, token) {
   const proto = String(request.headers["x-forwarded-proto"] || "").split(",")[0].trim();
   const secure = proto === "https";
   response.setHeader(
     "Set-Cookie",
-    `${AUTH_COOKIE}=${AUTH_TOKEN}; Path=/; Max-Age=43200; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`,
+    `${AUTH_COOKIE}=${token}; Path=/; Max-Age=43200; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`,
   );
+}
+
+function getAuthenticatedUsername(cookieValue) {
+  const value = String(cookieValue || "");
+
+  for (const [token, username] of AUTH_TOKEN_BY_VALUE.entries()) {
+    if (safeEqual(value, token)) {
+      return username;
+    }
+  }
+
+  if (LEGACY_AUTH_TOKEN && safeEqual(value, LEGACY_AUTH_TOKEN)) {
+    return APP_USER || "freehome";
+  }
+
+  return "";
+}
+
+function findAuthUser(login, password) {
+  const normalizedLogin = normalizeUsername(login);
+  const candidates = normalizedLogin
+    ? AUTH_USERS.filter((user) => user.username === normalizedLogin)
+    : AUTH_USERS;
+
+  return candidates.find((user) => safeEqual(password, user.password));
 }
 
 function loginPage(hasError) {
@@ -80,8 +182,9 @@ button:hover{background:#d4b86a}.err{margin:0 0 14px;padding:9px 11px;border-rad
 </style></head><body>
 <form class="card" method="post" action="/login" autocomplete="off">
 <h1>FREE <b>HOME</b></h1>
-<p>Obrobka zdjec AI - strefa wewnetrzna</p>
-${hasError ? '<div class="err">Bledne haslo. Sprobuj ponownie.</div>' : ""}
+<p>Narzedzia AI - strefa wewnetrzna</p>
+${hasError ? '<div class="err">Bledny login lub haslo. Sprobuj ponownie.</div>' : ""}
+<input type="text" name="login" placeholder="Login" autocomplete="username">
 <input type="password" name="haslo" placeholder="Haslo" autofocus autocomplete="current-password" required>
 <button type="submit">Wejdz</button>
 </form>
@@ -100,8 +203,10 @@ app.use((request, response, next) => {
   }
 
   const cookies = readCookies(request.headers.cookie);
+  const authenticatedUsername = getAuthenticatedUsername(cookies[AUTH_COOKIE]);
 
-  if (cookies[AUTH_COOKIE] && safeEqual(cookies[AUTH_COOKIE], AUTH_TOKEN)) {
+  if (authenticatedUsername) {
+    request.currentUser = authenticatedUsername;
     next();
     return;
   }
@@ -114,17 +219,20 @@ app.use((request, response, next) => {
     urlKey = "";
   }
 
-  if (URL_SECRET && urlKey && safeEqual(urlKey, URL_SECRET)) {
-    setAuthCookie(request, response);
+  if (URL_SECRET && urlKey && safeEqual(urlKey, URL_SECRET) && URL_AUTH_TOKEN) {
+    request.currentUser = URL_AUTH_USER.username;
+    setAuthCookie(request, response, URL_AUTH_TOKEN);
     next();
     return;
   }
 
   if (request.method === "POST" && request.path === "/login") {
+    const login = String((request.body && request.body.login) || "");
     const password = String((request.body && request.body.haslo) || "");
+    const user = findAuthUser(login, password);
 
-    if (APP_PASS && safeEqual(password, APP_PASS)) {
-      setAuthCookie(request, response);
+    if (user) {
+      setAuthCookie(request, response, createAuthToken(user));
       response.statusCode = 302;
       response.setHeader("Location", "/");
       response.end();
@@ -148,6 +256,101 @@ const upload = multer({
   limits: {
     fileSize: 20 * 1024 * 1024,
   },
+});
+
+async function readListingMemory() {
+  if (!existsSync(listingMemoryPath)) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(await readFile(listingMemoryPath, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeListingMemory(items) {
+  await mkdir(outputDir, { recursive: true });
+  await writeFile(listingMemoryPath, JSON.stringify(items, null, 2), "utf8");
+}
+
+function publicListingMemoryItem(item) {
+  return {
+    id: String(item.id || ""),
+    address: String(item.address || ""),
+    content: String(item.content || ""),
+    rawData: String(item.rawData || ""),
+    createdAt: String(item.createdAt || ""),
+    updatedAt: String(item.updatedAt || ""),
+    user: String(item.user || ""),
+  };
+}
+
+app.get("/api/auth/me", (request, response) => {
+  response.json({ user: request.currentUser || "" });
+});
+
+app.get("/api/listing-memory", async (request, response) => {
+  try {
+    const items = (await readListingMemory())
+      .map(publicListingMemoryItem)
+      .filter((item) => item.id && item.address && item.content)
+      .sort((first, second) => second.updatedAt.localeCompare(first.updatedAt))
+      .slice(0, 100);
+
+    response.json({ items });
+  } catch (error) {
+    response.status(500).json({ error: "Nie udało się odczytać pamięci opisów." });
+  }
+});
+
+app.post("/api/listing-memory", async (request, response) => {
+  try {
+    const address = String(request.body?.address ?? "").trim();
+    const content = String(request.body?.content ?? "").trim();
+    const rawData = String(request.body?.rawData ?? "").trim();
+
+    if (!address) {
+      response.status(400).json({ error: "Wpisz adres lub nazwę oferty." });
+      return;
+    }
+
+    if (!content) {
+      response.status(400).json({ error: "Najpierw wygeneruj opis." });
+      return;
+    }
+
+    if (content.length > 160_000) {
+      response.status(400).json({ error: "Opis jest za długi do zapisania." });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const items = await readListingMemory();
+    const normalizedAddress = address.toLowerCase();
+    const existingIndex = items.findIndex((item) => String(item.address || "").trim().toLowerCase() === normalizedAddress);
+    const nextItem = {
+      id: existingIndex > -1 ? items[existingIndex].id || randomUUID() : randomUUID(),
+      address,
+      content,
+      rawData,
+      createdAt: existingIndex > -1 ? items[existingIndex].createdAt || now : now,
+      updatedAt: now,
+      user: request.currentUser || "unknown",
+    };
+
+    const nextItems =
+      existingIndex > -1
+        ? items.map((item, index) => (index === existingIndex ? nextItem : item))
+        : [nextItem, ...items];
+
+    await writeListingMemory(nextItems.slice(0, 200));
+    response.json({ item: publicListingMemoryItem(nextItem) });
+  } catch (error) {
+    response.status(500).json({ error: "Nie udało się zapisać opisu w pamięci." });
+  }
 });
 
 app.post("/api/photo-analysis", upload.single("image"), async (request, response) => {
@@ -1057,6 +1260,7 @@ function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listin
     "Każdy nagłówek sekcji w opisie portalowym musi być pogrubiony jako osobna linia, np. **Lokalizacja**.",
     "Bezpośrednio pod pogrubionym nagłówkiem sekcji ma być opis, bez pustej linii przerwy między nagłówkiem a opisem.",
     "Na końcu opisu portalowego pogrub: **FREE HOME nieruchomości Głogów** oraz końcowe podsumowanie z CTA.",
+    "Przed linią **FREE HOME nieruchomości Głogów** zostaw jedną pustą linię odstępu od poprzedniego akapitu.",
     "Końcowe CTA po nazwie FREE HOME ma mieć maksymalnie 2-3 zdania. Ma zachęcać do kontaktu, obejrzenia nieruchomości i umówienia prezentacji, ale bez lania wody i bez numeru telefonu.",
     "Nie używaj suchego zakończenia typu tylko: Zapraszam do kontaktu i na prezentację mieszkania. Zrób bardziej zachęcające podsumowanie, np. podkreśl, że warto zobaczyć układ, lokalizację lub potencjał na żywo.",
     "Nagłówki głównych bloków też pogrub: **Opis na portale**, **Sugestie tytułów**, **Skrócona wersja na Marketplace**, **Wersja na grupy Facebook**, **Post social media**, **SMS do klienta**, **Relacja Facebook 24h**, **Bonus YouTube**.",
@@ -1064,12 +1268,12 @@ function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listin
     "Nie pisz tekstu typu: Oto przygotowana oferta, Ogłoszenie według schematu, Jasne, poniżej.",
     "",
     "KONTROLA DANYCH I PYTANIA",
-    "Na początku odpowiedzi dodaj sekcję: Kontrola danych.",
-    "Kontrola danych ma być praktycznym audytem przed publikacją. Wypisz krótko: co jest gotowe, co jest mocnym atutem, czego brakuje i co warto doprecyzować.",
+    "Kontrola danych ma pojawić się zawsze jako osobna sekcja pod materiałami marketingowymi, nie na samej górze.",
+    "Kontrola danych ma być bardziej rozwiniętym, praktycznym audytem przed publikacją. Wypisz w krótkich akapitach: co jest gotowe, co jest mocnym atutem, czego brakuje, co warto doprecyzować i jakie informacje są ryzykowne do publikacji bez potwierdzenia.",
     "Nie wymyślaj brakujących informacji. Jeżeli brakuje piętra, ogrzewania, formy własności, piwnicy, balkonu, czynszu, metrażu, stanu prawnego, terminu wydania albo wyposażenia, wskaż to jako brak do uzupełnienia.",
-    "Po kontroli dodaj sekcję: Pytania do właściciela.",
+    "Pytania do właściciela mają być ostatnią sekcją całej odpowiedzi, na samym dole.",
     "Pytania mają być gotowe do wysłania właścicielowi lub do zadania na spotkaniu. Maksymalnie 8-12 pytań, tylko jeśli mają sens przy tych danych.",
-    "Po pytaniach dodaj sekcję: Atuty ze zdjęć.",
+    "Atuty ze zdjęć dodaj po Bonus YouTube, przed Kontrolą danych.",
     "Jeśli są zdjęcia, wypisz pewne atuty widoczne na zdjęciach i elementy, których można użyć w opisie. Jeśli zdjęć nie ma, napisz krótko: Nie dołączono zdjęć - sekcja do uzupełnienia po analizie fotografii.",
     "",
     "TYTUŁY",
@@ -1134,9 +1338,6 @@ function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listin
     "",
     "FORMAT ODPOWIEDZI",
     "Zwróć tylko gotowy materiał do skopiowania, w tej kolejności:",
-    "**Kontrola danych**",
-    "**Pytania do właściciela**",
-    "**Atuty ze zdjęć**",
     "**Opis na portale**",
     "**Sugestie tytułów**",
     "**Skrócona wersja na Marketplace**",
@@ -1145,6 +1346,9 @@ function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listin
     "**SMS do klienta**",
     "**Relacja Facebook 24h**",
     "**Bonus YouTube**",
+    "**Atuty ze zdjęć**",
+    "**Kontrola danych**",
+    "**Pytania do właściciela**",
     "Nie dodawaj pustej linii między pogrubionym nagłówkiem podsekcji a opisem pod nim.",
   ].join("\n");
 }
