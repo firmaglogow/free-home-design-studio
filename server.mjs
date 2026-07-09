@@ -16,7 +16,7 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT ?? 5173);
 const economyTextModel = process.env.OPENAI_TEXT_MODEL ?? "gpt-5.4-nano";
-const imageModel = process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-1.5";
+const imageModel = process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-2";
 const promptModel = process.env.OPENAI_PROMPT_MODEL ?? economyTextModel;
 const analysisModel = process.env.OPENAI_ANALYSIS_MODEL ?? economyTextModel;
 const listingModel = process.env.OPENAI_LISTING_MODEL ?? economyTextModel;
@@ -836,6 +836,7 @@ app.post("/api/photo-edits", upload.single("image"), async (request, response) =
         width: output.width,
         height: output.height,
         mode: editMode,
+        model: "local-sharp",
       });
       return;
     }
@@ -919,6 +920,7 @@ app.post("/api/photo-edits", upload.single("image"), async (request, response) =
       width: output.width,
       height: output.height,
       mode: editMode,
+      model: imageModel,
     });
   } catch (error) {
     response.status(500).json({
