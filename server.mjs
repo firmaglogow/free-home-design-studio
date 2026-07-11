@@ -726,6 +726,75 @@ app.post("/api/photo-prompt", upload.single("image"), async (request, response) 
   }
 });
 
+app.post("/api/photo-compare", upload.single("original"), async (request, response) => {
+  try {
+    const apiKey = getOpenAIKey();
+    const outputName = getSafeJpegFileName(request.body?.outputName);
+
+    if (!apiKey) {
+      response.status(503).json({ error: "Brakuje klucza OpenAI do kontroli zgodności." });
+      return;
+    }
+
+    if (!request.file || !outputName || !existsSync(getGeneratedFilePath(outputName))) {
+      response.status(400).json({ error: "Brakuje oryginału albo wygenerowanego zdjęcia do porównania." });
+      return;
+    }
+
+    const original = await normalizeOpenAIEditInput(request.file.buffer);
+    const edited = await readFile(getGeneratedFilePath(outputName));
+    const originalUrl = `data:image/jpeg;base64,${original.toString("base64")}`;
+    const editedUrl = `data:image/jpeg;base64,${edited.toString("base64")}`;
+    const openaiResponse = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: analysisModel,
+        max_output_tokens: 650,
+        input: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: [
+                  "Compare two real-estate photographs. Image 1 is the original source of truth. Image 2 is an edited result.",
+                  "Ignore intended changes to exposure, white balance, sharpness, noise, cleaning of temporary clutter and the explicitly selected canvas ratio.",
+                  "Detect only unintended property changes: windows, doors, walls, room geometry, furniture identity/position/size, appliances, lamps, countertops, tiles, grout, flooring, built-ins or camera viewpoint.",
+                  "Return JSON only with this exact shape:",
+                  '{"risk":"low|medium|high","score":0,"summary":"short Polish summary","warnings":["Polish warning"]}',
+                  "score means fidelity to the original property: 100 is fully faithful. Do not invent differences that cannot be seen confidently.",
+                ].join("\n"),
+              },
+              { type: "input_image", image_url: originalUrl, detail: "high" },
+              { type: "input_image", image_url: editedUrl, detail: "high" },
+            ],
+          },
+        ],
+      }),
+    });
+    const payload = await openaiResponse.json();
+
+    if (!openaiResponse.ok) {
+      response.status(openaiResponse.status).json({ error: extractOpenAIError(payload) });
+      return;
+    }
+
+    const raw = extractResponseText(payload).replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+    const parsed = JSON.parse(raw);
+    response.json({
+      risk: ["low", "medium", "high"].includes(parsed?.risk) ? parsed.risk : "medium",
+      score: Math.max(0, Math.min(100, Number(parsed?.score) || 0)),
+      summary: String(parsed?.summary || "Kontrola zakończona."),
+      warnings: Array.isArray(parsed?.warnings) ? parsed.warnings.map(String).slice(0, 8) : [],
+    });
+  } catch (error) {
+    response.status(500).json({
+      error: error instanceof Error ? error.message : "Nie udało się porównać zdjęć.",
+    });
+  }
+});
+
 app.post("/api/listing-copy", upload.array("images", 8), async (request, response) => {
   try {
     const apiKey = getOpenAIKey();
@@ -833,7 +902,12 @@ app.post("/api/photo-edits", upload.single("image"), async (request, response) =
 
     if (editMode === "enhance") {
       const output = await makeFaithfulPhotoJpeg(request.file.buffer, outputSize, framingMode);
-      const outputFileName = createOutputFileName(request.file.originalname, outputSize.id);
+      const outputFileName = createOutputFileName(
+        request.file.originalname,
+        outputSize.id,
+        request.body.projectName,
+        request.body.photoIndex,
+      );
       const outputPath = path.join(outputDir, outputFileName);
 
       await mkdir(outputDir, { recursive: true });
@@ -913,7 +987,12 @@ app.post("/api/photo-edits", upload.single("image"), async (request, response) =
     }
 
     const output = await makePortalJpeg(editedImageBuffer, outputSize, framingMode);
-    const outputFileName = createOutputFileName(request.file.originalname, outputSize.id);
+    const outputFileName = createOutputFileName(
+      request.file.originalname,
+      outputSize.id,
+      request.body.projectName,
+      request.body.photoIndex,
+    );
     const outputPath = path.join(outputDir, outputFileName);
 
     await mkdir(outputDir, { recursive: true });
@@ -1032,6 +1111,57 @@ app.post("/api/save-downloads", async (request, response) => {
     response.status(500).json({
       error: error instanceof Error ? error.message : "Nie udało się zapisać ZIP w Pobrane.",
     });
+  }
+});
+
+app.post("/api/export-pack", async (request, response) => {
+  try {
+    const fileNames = Array.isArray(request.body?.fileNames)
+      ? request.body.fileNames.map(getSafeJpegFileName).filter(Boolean)
+      : [];
+    const packageMode = request.body?.packageMode === "social" ? "social" : "portal";
+    const projectSlug = String(request.body?.projectName || "nieruchomosc")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .toLowerCase()
+      .slice(0, 55) || "nieruchomosc";
+
+    if (!fileNames.length) {
+      response.status(400).json({ error: "Brakuje zdjęć do eksportu." });
+      return;
+    }
+
+    response.setHeader("Content-Type", "application/zip");
+    response.setHeader("Content-Disposition", `attachment; filename="${projectSlug}-${packageMode}.zip"`);
+    const archive = new ZipArchive({ zlib: { level: 9 } });
+    archive.on("error", (error) => response.destroy(error));
+    archive.pipe(response);
+
+    for (const [index, fileName] of fileNames.entries()) {
+      const sourcePath = getGeneratedFilePath(fileName);
+      if (!existsSync(sourcePath)) continue;
+      const number = String(index + 1).padStart(2, "0");
+
+      if (packageMode === "social") {
+        const square = await sharp(sourcePath).resize(1080, 1080, { fit: "cover", position: "attention" }).jpeg({ quality: 92 }).toBuffer();
+        const portrait = await sharp(sourcePath).resize(1080, 1350, { fit: "cover", position: "attention" }).jpeg({ quality: 92 }).toBuffer();
+        archive.append(square, { name: `${projectSlug}-${number}-facebook-1x1.jpg` });
+        archive.append(portrait, { name: `${projectSlug}-${number}-social-4x5.jpg` });
+      } else {
+        const portal = await sharp(sourcePath).resize(2400, 1600, { fit: "cover", position: "attention" }).jpeg({ quality: 94 }).toBuffer();
+        archive.append(portal, { name: `${projectSlug}-${number}-portal-3x2.jpg` });
+      }
+    }
+
+    await archive.finalize();
+  } catch (error) {
+    if (!response.headersSent) {
+      response.status(500).json({
+        error: error instanceof Error ? error.message : "Nie udało się przygotować paczki ZIP.",
+      });
+    }
   }
 });
 
@@ -1325,7 +1455,7 @@ async function finishJpeg(pipeline) {
   };
 }
 
-function createOutputFileName(originalName, resolution) {
+function createOutputFileName(originalName, resolution, projectName, photoIndex) {
   const cleanBaseName = path
     .basename(originalName || "zdjecie")
     .replace(/\.[^.]+$/, "")
@@ -1336,7 +1466,18 @@ function createOutputFileName(originalName, resolution) {
     .replace(/^-|-$/g, "")
     .slice(0, 80);
 
-  return `${cleanBaseName || "zdjecie"}-ai-crm-${resolution}-${randomUUID()}.jpg`;
+  const cleanProjectName = String(projectName ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase()
+    .slice(0, 55);
+  const index = String(Math.max(1, Math.min(99, Number(photoIndex) || 1))).padStart(2, "0");
+  const prefix = cleanProjectName ? `${cleanProjectName}-${index}` : cleanBaseName || `zdjecie-${index}`;
+
+  return `${prefix}-${resolution}-${randomUUID().slice(0, 8)}.jpg`;
 }
 
 function getSafeJpegFileName(fileName) {
