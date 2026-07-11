@@ -1422,18 +1422,40 @@ function extractResponseText(payload) {
 }
 
 function splitPromptResponse(text) {
-  const cleanText = String(text || "").trim();
+  const cleanText = String(text || "")
+    .trim()
+    .replace(/^```(?:text|markdown)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
 
   if (!cleanText) {
     return { prompt: "" };
   }
 
-  const promptMatch = cleanText.match(/PROMPT_EN\s*:\s*([\s\S]*)$/i);
-  const analysisMatch = cleanText.match(/ANALYSIS_PL\s*:\s*([\s\S]*?)(?=\n\s*PROMPT_EN\s*:|$)/i);
+  const promptLabel = String.raw`(?:PROMPT[_ ]?EN|FINAL[_ ]?PROMPT|GOTOWY[_ ]?PROMPT|PROMPT)`;
+  const analysisLabel = String.raw`(?:ANALYSIS[_ ]?PL|ANALIZA[_ ]?PL|ANALIZA)`;
+  const promptMatch = cleanText.match(
+    new RegExp(`(?:^|\\n)\\s*(?:\\*\\*)?${promptLabel}(?:\\*\\*)?\\s*:?\\s*([\\s\\S]*)$`, "i"),
+  );
+  const analysisMatch = cleanText.match(
+    new RegExp(
+      `(?:^|\\n)\\s*(?:\\*\\*)?${analysisLabel}(?:\\*\\*)?\\s*:?\\s*([\\s\\S]*?)(?=\\n\\s*(?:\\*\\*)?${promptLabel}(?:\\*\\*)?\\s*:|$)`,
+      "i",
+    ),
+  );
+  let prompt = promptMatch?.[1]?.trim() || "";
+
+  if (!prompt && analysisMatch) {
+    prompt = cleanText.replace(analysisMatch[0], "").trim();
+  }
+
+  if (!prompt) {
+    prompt = cleanText;
+  }
 
   return {
     analysis: analysisMatch?.[1]?.trim() || "",
-    prompt: (promptMatch?.[1] || cleanText).trim(),
+    prompt,
   };
 }
 
