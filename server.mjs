@@ -31,6 +31,15 @@ const outputSizes = {
 const defaultOutputSize = outputSizes["4k"];
 const openAIEditMaxEdge = 2560;
 const openAIEditMaxPixels = 4_500_000;
+const framingModes = {
+  original: { label: "jak oryginał", aspectRatio: undefined },
+  "landscape-3-2": { label: "poziomy 3:2", aspectRatio: 3 / 2 },
+  "landscape-4-3": { label: "poziomy 4:3", aspectRatio: 4 / 3 },
+  "landscape-16-9": { label: "poziomy 16:9", aspectRatio: 16 / 9 },
+  "square-1-1": { label: "kwadrat 1:1", aspectRatio: 1 },
+  "portrait-4-5": { label: "pionowy 4:5", aspectRatio: 4 / 5 },
+  "story-9-16": { label: "pionowy 9:16", aspectRatio: 9 / 16 },
+};
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -1093,7 +1102,13 @@ function shouldAllowGenerativeAi(body) {
 }
 
 function normalizeFramingMode(value) {
-  return String(value ?? "original") === "portal" ? "portal" : "original";
+  const requestedMode = String(value ?? "original");
+
+  if (requestedMode === "portal") {
+    return "landscape-3-2";
+  }
+
+  return framingModes[requestedMode] ? requestedMode : "original";
 }
 
 function getOutputSize(value) {
@@ -1106,10 +1121,10 @@ function buildPortalEditPrompt(userPrompt, framingMode) {
     return "";
   }
 
-  const framingInstruction =
-    framingMode === "portal"
-      ? "- Kadr może być przygotowany jako poziomy 3:2 na portale, ale nie wolno wymyślać nowych fragmentów mieszkania ani zmieniać geometrii wnętrza, żeby wypełnić kadr."
-      : "- Zachowaj oryginalne płótno zdjęcia, orientację, kadr, proporcje i widoczne granice dokładnie 1:1. Wybrana jakość wyjściowa nie jest zgodą na zmianę formatu. Nie zmieniaj wymiarów kadru, nie przycinaj pokoju, nie rozszerzaj sceny, nie dorysowuj boków, nie obracaj, nie rób poziomu z pionu, pionu z poziomu, kwadratu, panoramy ani formatu 3:2, chyba że użytkownik wyraźnie poprosił o taki konkretny format. Delikatne wyrównanie techniczne jest dozwolone tylko jak wypoziomowanie aparatu na statywie i nie może zauważalnie zmienić kompozycji ani rozmiaru obiektów.";
+  const framing = framingModes[framingMode] ?? framingModes.original;
+  const framingInstruction = framing.aspectRatio
+    ? `- Użytkownik jawnie wybrał format wyniku: ${framing.label}. Wygeneruj dokładnie tę orientację i proporcję. Zmieniaj wyłącznie zewnętrzne płótno kadru tak oszczędnie, jak to możliwe. Nie wolno przesuwać ani skalować obiektów, zmieniać perspektywy, pozycji kamery, geometrii mieszkania lub wymyślać architektury, żeby wypełnić format.`
+    : "- Zachowaj oryginalne płótno zdjęcia, orientację, kadr, proporcje i widoczne granice dokładnie 1:1. Wybrana jakość wyjściowa nie jest zgodą na zmianę formatu. Nie zmieniaj wymiarów kadru, nie przycinaj pokoju, nie rozszerzaj sceny, nie dorysowuj boków, nie obracaj, nie rób poziomu z pionu, pionu z poziomu, kwadratu, panoramy ani formatu 3:2. Delikatne wyrównanie techniczne jest dozwolone tylko jak wypoziomowanie aparatu na statywie i nie może zauważalnie zmienić kompozycji ani rozmiaru obiektów.";
 
   return [
     userPrompt,
@@ -1161,7 +1176,8 @@ async function getOpenAIEditOutputSize(imageBuffer, framingMode, outputSize) {
   const metadata = await sharp(imageBuffer, { limitInputPixels: false }).metadata();
   const width = metadata.width || 1;
   const height = metadata.height || 1;
-  const aspectRatio = framingMode === "portal" ? 1.5 : Math.min(3, Math.max(1 / 3, width / height));
+  const selectedAspectRatio = framingModes[framingMode]?.aspectRatio;
+  const aspectRatio = selectedAspectRatio ?? Math.min(3, Math.max(1 / 3, width / height));
   const requestedLongEdge = Math.min(outputSize.longEdge, openAIEditMaxEdge);
   let targetWidth;
   let targetHeight;
@@ -1272,8 +1288,13 @@ async function makePortalJpeg(imageBuffer, outputSize, framingMode) {
 }
 
 function resizeForFraming(pipeline, outputSize, framingMode) {
-  if (framingMode === "portal") {
-    return pipeline.resize(outputSize.width, outputSize.height, {
+  const aspectRatio = framingModes[framingMode]?.aspectRatio;
+
+  if (aspectRatio) {
+    const width = aspectRatio >= 1 ? outputSize.longEdge : Math.round(outputSize.longEdge * aspectRatio);
+    const height = aspectRatio >= 1 ? Math.round(outputSize.longEdge / aspectRatio) : outputSize.longEdge;
+
+    return pipeline.resize(width, height, {
       fit: "cover",
       position: "attention",
       withoutEnlargement: false,
@@ -1424,10 +1445,11 @@ function buildPromptGeneratorInstruction({
   presetIds,
   fileName,
 }) {
-  const portalInstruction =
-    framingMode === "portal"
-      ? "The final prompt may ask for a horizontal real estate portal format, but it must forbid inventing new room content, extending the scene with fake architecture, changing perspective or changing the true layout."
-      : "The final prompt must preserve the original canvas, output dimensions, orientation, framing and aspect ratio exactly. It may ask for very slight technical straightening like a tripod-level correction, but not for resizing, cropping, extending the scene, changing portrait/landscape orientation or creating a new composition.";
+  const normalizedFramingMode = normalizeFramingMode(framingMode);
+  const selectedFraming = framingModes[normalizedFramingMode] ?? framingModes.original;
+  const portalInstruction = selectedFraming.aspectRatio
+    ? `The user explicitly selected the output format ${selectedFraming.label}. The final prompt must require exactly this orientation and aspect ratio. It may adapt only the outer canvas conservatively and must forbid moving or resizing objects, changing perspective, changing the camera viewpoint, inventing architecture or redesigning the property to fill the frame.`
+    : "The final prompt must preserve the original canvas, output dimensions, orientation, framing and aspect ratio exactly. It may ask for very slight technical straightening like a tripod-level correction, but not for resizing, cropping, extending the scene, changing portrait/landscape orientation or creating a new composition.";
 
   return [
     "Jesteś ekspertem od promptów do edycji zdjęć nieruchomości w ChatGPT.",
@@ -1436,7 +1458,9 @@ function buildPromptGeneratorInstruction({
     "",
     "NAJWAŻNIEJSZA ZASADA:",
     "Zdjęcie wejściowe jest jedynym źródłem prawdy. Prompt ma zablokować zmianę mieszkania, geometrii, układu, okien, mebli, lamp, blatów, kafelków, fug, podłogi i proporcji.",
-    "Domyślnie prompt ma też zablokować zmianę formatu samego zdjęcia: ten sam rozmiar płótna, ta sama orientacja, te same proporcje, ten sam widoczny kadr. Nie wolno robić zdjęcia poziomego z pionowego, pionowego z poziomego, kwadratu, panoramy, formatu 3:2 ani innego przekadrowania, chyba że użytkownik wyraźnie o to poprosi.",
+    selectedFraming.aspectRatio
+      ? `Użytkownik jawnie wybrał format ${selectedFraming.label}. Ten wybór ma pierwszeństwo przed formatem zdjęcia wejściowego i musi znaleźć się w finalnym promptcie. Nie daje to zgody na zmianę mieszkania, geometrii, perspektywy, pozycji kamery ani położenia i rozmiaru obiektów.`
+      : "Prompt ma zablokować zmianę formatu samego zdjęcia: ten sam rozmiar płótna, ta sama orientacja, te same proporcje i ten sam widoczny kadr. Nie wolno robić zdjęcia poziomego z pionowego, pionowego z poziomego, kwadratu, panoramy, formatu 3:2 ani innego przekadrowania.",
     "Dozwolona jest tylko bardzo delikatna korekta techniczna kadru, jak wyrównanie aparatu na statywie. Nie może ona zauważalnie przycinać pokoju, zmieniać rozmiaru obiektów, perspektywy, ogniskowej ani kompozycji.",
     "",
     "W finalnym promptcie po angielsku koniecznie uwzględnij:",
@@ -1466,7 +1490,7 @@ function buildPromptGeneratorInstruction({
     `Nazwa pliku: ${fileName}.`,
     `Wybór użytkownika / opis celu: ${userRequest || "brak dodatkowego opisu; wykonaj wierny retusz 1:1 i profesjonalne sprzątanie zdjęcia"}.`,
     `Docelowy rozmiar opisowy: ${outputResolution || "4k"} - traktuj to wyłącznie jako poziom jakości, nie jako zgodę na zmianę proporcji, orientacji, płótna ani kadru.`,
-    `Tryb kadru: ${framingMode || "original"}. ${portalInstruction}`,
+    `Wybrany format wyniku: ${selectedFraming.label}. ${portalInstruction}`,
     `Aktywne tryby aplikacji: ${presetIds || "faithful, clean, catalog"}.`,
     "",
     "STAŁE ZASADY APLIKACJI:",
