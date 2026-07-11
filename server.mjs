@@ -1477,6 +1477,9 @@ function buildPromptGeneratorInstruction({
     "Jesteś ekspertem od promptów do edycji zdjęć nieruchomości w ChatGPT.",
     "Obejrzyj przesłane zdjęcie i przygotuj gotowy, rozbudowany prompt po angielsku do wklejenia w ChatGPT razem z tym samym zdjęciem.",
     "To NIE jest redesign wnętrza. To ma być instrukcja do profesjonalnego retuszu zdjęcia nieruchomości 1:1.",
+    "Finalny prompt ma być uporządkowany i bez powtórzeń. Nie powtarzaj tego samego zakazu w kilku sekcjach.",
+    "Użyj dokładnie tej kolejności sekcji: TASK, SOURCE OF TRUTH, USER REQUEST, ALLOWED CHANGES ONLY, LOCKED PROPERTY ELEMENTS, OBSERVED DETAILS TO PRESERVE, PHOTOGRAPHIC FINISH, OUTPUT FORMAT, FINAL VALIDATION.",
+    "Najważniejsza konstrukcja promptu: Change only the explicitly requested elements. Keep everything else exactly the same.",
     "",
     "NAJWAŻNIEJSZA ZASADA:",
     "Zdjęcie wejściowe jest jedynym źródłem prawdy. Prompt ma zablokować zmianę mieszkania, geometrii, układu, okien, mebli, lamp, blatów, kafelków, fug, podłogi i proporcji.",
@@ -1521,7 +1524,7 @@ function buildPromptGeneratorInstruction({
     "FORMAT ODPOWIEDZI:",
     "Zwróć dokładnie dwie sekcje:",
     "ANALYSIS_PL: krótko po polsku, 4-7 punktów, co rozpoznajesz na zdjęciu i czego trzeba pilnować.",
-    "PROMPT_EN: kompletny prompt po angielsku do skopiowania do ChatGPT. Ma być rozbudowany, konkretny, gotowy do użycia, bez komentarzy poza promptem.",
+    "PROMPT_EN: kompletny, konkretny prompt po angielsku do skopiowania do ChatGPT. Ma zawierać dynamiczną listę faktycznie widocznych elementów chronionych, nie powtarzać zakazów, nie zawierać sprzecznych poleceń i być gotowy do użycia bez dodatkowych komentarzy.",
   ]
     .filter(Boolean)
     .join("\n");
