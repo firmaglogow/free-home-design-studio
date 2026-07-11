@@ -29,6 +29,8 @@ const outputSizes = {
   "4k": { id: "4k", width: 3840, height: 2560, longEdge: 3840 },
 };
 const defaultOutputSize = outputSizes["4k"];
+const openAIEditMaxEdge = 2560;
+const openAIEditMaxPixels = 4_500_000;
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -862,27 +864,23 @@ app.post("/api/photo-edits", upload.single("image"), async (request, response) =
 
     const quality = normalizeQuality(request.body.quality);
     const outputFormat = "jpeg";
-    const editInputSize = await getOpenAIEditInputSize(request.file.buffer, framingMode);
+    const normalizedInputBuffer = await normalizeOpenAIEditInput(request.file.buffer);
+    const editInputSize = await getOpenAIEditOutputSize(normalizedInputBuffer, framingMode, outputSize);
 
     const formData = new FormData();
-    const imageBlob = new Blob([request.file.buffer], {
-      type: request.file.mimetype || "image/jpeg",
+    const imageBlob = new Blob([normalizedInputBuffer], {
+      type: "image/jpeg",
     });
 
     formData.append("model", imageModel);
     formData.append("prompt", prompt);
-    formData.append("image", imageBlob, request.file.originalname || "property-photo.jpg");
+    formData.append("image", imageBlob, "property-photo.jpg");
     formData.append("size", editInputSize);
     formData.append("quality", quality);
     formData.append("output_format", outputFormat);
+    formData.append("output_compression", "95");
 
-    const openaiResponse = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: formData,
-    });
+    const openaiResponse = await requestOpenAIImageEdit(apiKey, formData);
 
     const contentType = openaiResponse.headers.get("content-type") ?? "";
     const payload = contentType.includes("application/json")
@@ -921,6 +919,7 @@ app.post("/api/photo-edits", upload.single("image"), async (request, response) =
       height: output.height,
       mode: editMode,
       model: imageModel,
+      apiSize: editInputSize,
     });
   } catch (error) {
     response.status(500).json({
@@ -1073,6 +1072,10 @@ function extractOpenAIError(payload) {
     return "OpenAI API działa, ale konto nie ma dostępnego limitu albo aktywnego billing/środków. Wejdź w Billing na platform.openai.com i dodaj środki lub metodę płatności.";
   }
 
+  if (/invalid image file|image file or mode|unsupported image/i.test(message)) {
+    return "OpenAI nie rozpoznało formatu zdjęcia. Program przekonwertował je do standardowego JPG RGB, ale plik nadal jest uszkodzony lub nieobsługiwany. Zapisz zdjęcie ponownie jako JPG albo PNG i spróbuj jeszcze raz.";
+  }
+
   return message || "OpenAI zwróciło błąd.";
 }
 
@@ -1154,25 +1157,91 @@ async function getEditedImageBuffer(payload) {
   return Buffer.from(await imageResponse.arrayBuffer());
 }
 
-async function getOpenAIEditInputSize(imageBuffer, framingMode) {
-  if (framingMode === "portal") {
-    return "1536x1024";
-  }
-
+async function getOpenAIEditOutputSize(imageBuffer, framingMode, outputSize) {
   const metadata = await sharp(imageBuffer, { limitInputPixels: false }).metadata();
   const width = metadata.width || 1;
   const height = metadata.height || 1;
-  const aspectRatio = width / height;
+  const aspectRatio = framingMode === "portal" ? 1.5 : Math.min(3, Math.max(1 / 3, width / height));
+  const requestedLongEdge = Math.min(outputSize.longEdge, openAIEditMaxEdge);
+  let targetWidth;
+  let targetHeight;
 
-  if (aspectRatio > 1.12) {
-    return "1536x1024";
+  if (aspectRatio >= 1) {
+    targetWidth = roundImageDimension(requestedLongEdge);
+    targetHeight = roundImageDimension(targetWidth / aspectRatio);
+  } else {
+    targetHeight = roundImageDimension(requestedLongEdge);
+    targetWidth = roundImageDimension(targetHeight * aspectRatio);
   }
 
-  if (aspectRatio < 0.9) {
-    return "1024x1536";
+  const totalPixels = targetWidth * targetHeight;
+
+  if (totalPixels > openAIEditMaxPixels) {
+    const scale = Math.sqrt(openAIEditMaxPixels / totalPixels);
+    targetWidth = roundImageDimension(targetWidth * scale, "down");
+    targetHeight = roundImageDimension(targetHeight * scale, "down");
   }
 
-  return "1024x1024";
+  return `${targetWidth}x${targetHeight}`;
+}
+
+function roundImageDimension(value, direction = "nearest") {
+  const rounded = direction === "down" ? Math.floor(value / 16) * 16 : Math.round(value / 16) * 16;
+  return Math.max(16, rounded);
+}
+
+async function requestOpenAIImageEdit(apiKey, formData) {
+  let lastError;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch("https://api.openai.com/v1/images/edits", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: formData,
+      });
+
+      if (attempt === 0 && [429, 500, 502, 503, 504].includes(response.status)) {
+        await response.arrayBuffer();
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        continue;
+      }
+
+      return response;
+    } catch (error) {
+      lastError = error;
+
+      if (attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        continue;
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Nie udało się połączyć z OpenAI.");
+}
+
+async function normalizeOpenAIEditInput(imageBuffer) {
+  try {
+    return await sharp(imageBuffer, {
+      limitInputPixels: false,
+      failOn: "none",
+    })
+      .rotate()
+      .flatten({ background: "#ffffff" })
+      .toColourspace("srgb")
+      .jpeg({
+        quality: 96,
+        chromaSubsampling: "4:4:4",
+      })
+      .toBuffer();
+  } catch {
+    throw new Error(
+      "Nie udało się odczytać formatu zdjęcia. Zapisz je jako standardowy JPG lub PNG i spróbuj ponownie.",
+    );
+  }
 }
 
 async function makeFaithfulPhotoJpeg(imageBuffer, outputSize, framingMode) {
