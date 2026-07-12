@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { installCrmGuard } from "./crm-auth.mjs";
 import express from "express";
 import multer from "multer";
 import sharp from "sharp";
@@ -42,6 +43,7 @@ const framingModes = {
 };
 
 const app = express();
+installCrmGuard(app);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
@@ -331,6 +333,30 @@ ${hasError ? '<div class="err">Bledny login lub haslo. Sprobuj ponownie.</div>' 
 </form>
 </body></html>`;
 }
+
+// Wąski most dla kreatora ofert na crm.freehome.pl. Dane są przesyłane
+// wyłącznie po świadomym kliknięciu „Uzupełnij formularz AI”, a endpoint nadal
+// wymaga aktywnego logowania do aplikacji Zdjęcia AI.
+app.use("/api/crm", (request, response, next) => {
+  const origin = String(request.headers.origin || "");
+  const allowed = origin === "https://crm.freehome.pl" || /^http:\/\/localhost:\d+$/.test(origin);
+  if (origin && !allowed) {
+    response.status(403).json({ error: "Niedozwolone źródło żądania." });
+    return;
+  }
+  if (allowed) {
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Access-Control-Allow-Credentials", "true");
+    response.setHeader("Vary", "Origin");
+    response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    response.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  }
+  if (request.method === "OPTIONS") {
+    response.status(204).end();
+    return;
+  }
+  next();
+});
 
 app.use((request, response, next) => {
   response.setHeader("Content-Security-Policy", `frame-ancestors ${FRAME_ANCESTORS}`);
@@ -884,6 +910,141 @@ app.post("/api/listing-copy", upload.array("images", 8), async (request, respons
     response.status(500).json({
       error: error instanceof Error ? error.message : "Nie udało się stworzyć opisu ogłoszenia.",
     });
+  }
+});
+
+app.post("/api/crm/extract-listing", async (request, response) => {
+  try {
+    const apiKey = getOpenAIKey();
+    const rawData = String(request.body?.rawData ?? "").trim();
+
+    if (!apiKey) {
+      response.status(503).json({ error: "Brakuje klucza OpenAI do analizy danych oferty." });
+      return;
+    }
+    if (rawData.length < 5 || rawData.length > 20_000) {
+      response.status(400).json({ error: "Wpisz informacje o nieruchomości (maksymalnie 20 000 znaków)." });
+      return;
+    }
+
+    const allowedDetails = [
+      "areaUsable", "areaPlot", "bedrooms", "bathrooms", "toilets", "levels", "roomHeight", "kitchenType",
+      "exposure", "availableDate", "administrativeRent", "additionalCharges",
+      "balcony", "loggia", "terrace", "garden", "basement", "storage", "attic", "garage", "parking",
+      "parkingUnderground", "condition", "wallType", "floorType", "windows", "furnishings", "agd", "heating",
+      "hotWater", "buildingType", "construction", "buildingMaterial", "renovationYear", "roofType", "roofMaterial",
+      "apartmentsOnFloor", "mediaWater", "mediaSewer", "mediaGas", "mediaPower", "mediaInternet", "elevator",
+      "airConditioning", "intercom", "monitoring", "gated", "blinds", "adapted", "playground", "school",
+      "kindergarten", "shops", "pharmacy", "park", "publicTransport", "plotDimensions", "plotShape", "zoning",
+      "developmentConditions", "accessRoad", "terrain", "commercialPurpose", "commercialEntrance", "shopWindow",
+    ];
+    const instruction = [
+      "Jesteś asystentem polskiego biura nieruchomości. Zamień chaotyczną notatkę agenta na pola formularza.",
+      "Nie zgaduj. Pole, którego nie da się pewnie ustalić, pomiń. Nie poprawiaj ceny ani metrażu na podstawie własnej wiedzy.",
+      "Zwróć wyłącznie poprawny JSON bez markdownu w kształcie:",
+      '{"fields":{"type":"Mieszkanie|Dom|Działka|Lokal","market":"wtorny|pierwotny","price":number,"areaTotal":number,"rooms":number,"buildingYear":number,"floor":"string","buildingFloors":"string","city":"string","estate":"string","street":"string","streetType":"ul.|al.|pl.|","features":"string","details":{}},"missing":["krótkie pytanie po polsku"]}',
+      `Dozwolone klucze details: ${allowedDetails.join(", ")}.`,
+      "Dla pól typu tak/nie w details używaj boolean. Liczby zwracaj jako number, pozostałe wartości jako krótkie stringi.",
+      "Nie zwracaj danych właściciela, numeru lokalu, numeru księgi wieczystej ani innych danych prywatnych.",
+      "NOTATKA AGENTA:",
+      rawData,
+    ].join("\n");
+
+    const openaiResponse = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: listingModel,
+        max_output_tokens: 1800,
+        input: [{ role: "user", content: [{ type: "input_text", text: instruction }] }],
+      }),
+    });
+    const payload = await openaiResponse.json();
+    if (!openaiResponse.ok) {
+      response.status(openaiResponse.status).json({ error: extractOpenAIError(payload) });
+      return;
+    }
+
+    const raw = extractResponseText(payload).replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+    const parsed = JSON.parse(raw);
+    const sourceFields = parsed && typeof parsed.fields === "object" ? parsed.fields : {};
+    const resultFields = {};
+    const baseKeys = ["type", "market", "price", "areaTotal", "rooms", "buildingYear", "floor", "buildingFloors", "city", "estate", "street", "streetType", "features"];
+    for (const key of baseKeys) {
+      if (sourceFields[key] !== undefined && sourceFields[key] !== null && sourceFields[key] !== "") resultFields[key] = sourceFields[key];
+    }
+    const sourceDetails = sourceFields.details && typeof sourceFields.details === "object" ? sourceFields.details : {};
+    resultFields.details = Object.fromEntries(
+      allowedDetails
+        .filter((key) => sourceDetails[key] !== undefined && sourceDetails[key] !== null && sourceDetails[key] !== "")
+        .map((key) => [key, sourceDetails[key]]),
+    );
+    response.json({ fields: resultFields, missing: Array.isArray(parsed?.missing) ? parsed.missing.map(String).slice(0, 20) : [] });
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : "Nie udało się rozpoznać danych oferty." });
+  }
+});
+
+app.post("/api/crm/generate-description", async (request, response) => {
+  try {
+    const apiKey = getOpenAIKey();
+    const rawData = String(request.body?.rawData ?? "").trim();
+    const propertyType = String(request.body?.propertyType ?? "other").trim();
+    const currentDescription = String(request.body?.currentDescription ?? "").trim().slice(0, 20_000);
+    const revisionNotes = String(request.body?.revisionNotes ?? "").trim().slice(0, 5_000);
+
+    if (!apiKey) {
+      response.status(503).json({ error: "Brakuje klucza OpenAI do tworzenia opisu." });
+      return;
+    }
+    if (rawData.length < 20 || rawData.length > 30_000) {
+      response.status(400).json({ error: "Uzupełnij dane nieruchomości (maksymalnie 30 000 znaków)." });
+      return;
+    }
+
+    const instruction = [
+      buildListingCopyInstruction({
+        rawData,
+        extraNotes: "Opis jest generowany wewnątrz CRM. Zachowaj styl i zasady sprawdzonego modułu Opisy ofert.",
+        listingTones: "concrete,sales,premium",
+        listingDepth: "full",
+        propertyType,
+        imageCount: 0,
+      }),
+      "",
+      "SPECJALNY FORMAT DLA CRM — TA INSTRUKCJA MA PIERWSZEŃSTWO NAD PEŁNYM FORMATEM POWYŻEJ:",
+      "Zwróć wyłącznie sam główny opis portalowy, bez nagłówka Opis na portale i bez pozostałych materiałów marketingowych.",
+      "Nie zwracaj sugestii tytułów, Marketplace, Facebooka, SMS, YouTube, kontroli danych ani pytań do właściciela.",
+      "Zachowaj akapity, nagłówki sekcji i pogrubienia Markdown **tekst**. Nie używaj tabel ani kodu.",
+      currentDescription ? `ISTNIEJĄCY OPIS DO POPRAWY:\n${currentDescription}` : "Nie ma jeszcze istniejącego opisu — utwórz go od początku.",
+      revisionNotes ? `DODATKOWE UWAGI AGENTA DO NOWEJ WERSJI:\n${revisionNotes}` : "Brak dodatkowych uwag do redakcji.",
+      currentDescription
+        ? "Przygotuj pełną, poprawioną wersję opisu. Zachowaj prawidłowe fakty z istniejącej wersji, zastosuj uwagi agenta i uwzględnij aktualne dane formularza."
+        : "Przygotuj pełny opis na podstawie aktualnych danych formularza.",
+    ].join("\n");
+
+    const openaiResponse = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: listingModel,
+        max_output_tokens: 3200,
+        input: [{ role: "user", content: [{ type: "input_text", text: instruction }] }],
+      }),
+    });
+    const payload = await openaiResponse.json();
+    if (!openaiResponse.ok) {
+      response.status(openaiResponse.status).json({ error: extractOpenAIError(payload) });
+      return;
+    }
+    const description = extractResponseText(payload).trim();
+    if (!description) {
+      response.status(502).json({ error: "OpenAI nie zwróciło opisu oferty." });
+      return;
+    }
+    response.json({ description });
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : "Nie udało się stworzyć opisu oferty." });
   }
 });
 
