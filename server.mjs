@@ -940,10 +940,10 @@ app.post("/api/crm/extract-listing", async (request, response) => {
       "Jesteś asystentem polskiego biura nieruchomości. Zamień chaotyczną notatkę agenta na pola formularza.",
       "Nie zgaduj. Pole, którego nie da się pewnie ustalić, pomiń. Nie poprawiaj ceny ani metrażu na podstawie własnej wiedzy.",
       "Zwróć wyłącznie poprawny JSON bez markdownu w kształcie:",
-      '{"fields":{"type":"Mieszkanie|Dom|Działka|Lokal","market":"wtorny|pierwotny","price":number,"areaTotal":number,"rooms":number,"buildingYear":number,"floor":"string","buildingFloors":"string","city":"string","estate":"string","street":"string","streetType":"ul.|al.|pl.|","features":"string","details":{}},"missing":["krótkie pytanie po polsku"]}',
+      '{"fields":{"type":"Mieszkanie|Dom|Działka|Lokal","market":"wtorny|pierwotny","price":number,"areaTotal":number,"rooms":number,"buildingYear":number,"floor":"string","buildingFloors":"string","city":"string","estate":"string","street":"string","streetType":"ul.|al.|pl.|","buildingNumber":"string","apartmentNumber":"string","features":"string","portalTitle":"krótka propozycja tytułu na portal","details":{}},"missing":["krótkie pytanie po polsku"]}',
       `Dozwolone klucze details: ${allowedDetails.join(", ")}.`,
       "Dla pól typu tak/nie w details używaj boolean. Liczby zwracaj jako number, pozostałe wartości jako krótkie stringi.",
-      "Nie zwracaj danych właściciela, numeru lokalu, numeru księgi wieczystej ani innych danych prywatnych.",
+      "Nie zwracaj danych właściciela ani numeru księgi wieczystej. Numer budynku i lokalu zwróć tylko wtedy, gdy występują w notatce; CRM zapisze je jako prywatne.",
       "NOTATKA AGENTA:",
       rawData,
     ].join("\n");
@@ -967,7 +967,7 @@ app.post("/api/crm/extract-listing", async (request, response) => {
     const parsed = JSON.parse(raw);
     const sourceFields = parsed && typeof parsed.fields === "object" ? parsed.fields : {};
     const resultFields = {};
-    const baseKeys = ["type", "market", "price", "areaTotal", "rooms", "buildingYear", "floor", "buildingFloors", "city", "estate", "street", "streetType", "features"];
+    const baseKeys = ["type", "market", "price", "areaTotal", "rooms", "buildingYear", "floor", "buildingFloors", "city", "estate", "street", "streetType", "buildingNumber", "apartmentNumber", "features", "portalTitle"];
     for (const key of baseKeys) {
       if (sourceFields[key] !== undefined && sourceFields[key] !== null && sourceFields[key] !== "") resultFields[key] = sourceFields[key];
     }
@@ -980,6 +980,51 @@ app.post("/api/crm/extract-listing", async (request, response) => {
     response.json({ fields: resultFields, missing: Array.isArray(parsed?.missing) ? parsed.missing.map(String).slice(0, 20) : [] });
   } catch (error) {
     response.status(500).json({ error: error instanceof Error ? error.message : "Nie udało się rozpoznać danych oferty." });
+  }
+});
+
+app.post("/api/crm/suggest-title", async (request, response) => {
+  try {
+    const apiKey = getOpenAIKey();
+    const rawData = String(request.body?.rawData ?? "").trim();
+    if (!apiKey) {
+      response.status(503).json({ error: "Brakuje klucza OpenAI do tworzenia tytułu." });
+      return;
+    }
+    if (rawData.length < 20 || rawData.length > 30_000) {
+      response.status(400).json({ error: "Najpierw uzupełnij dane nieruchomości." });
+      return;
+    }
+    const openaiResponse = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: listingModel,
+        max_output_tokens: 120,
+        input: [{
+          role: "user",
+          content: [{ type: "input_text", text: [
+            "Napisz jeden konkretny tytuł ogłoszenia nieruchomości na polski portal.",
+            "Maksymalnie 75 znaków. Bez emoji, wykrzykników, wielkich liter w całym tytule i bez niepotwierdzonych informacji.",
+            "Zwróć wyłącznie tytuł, bez cudzysłowu i komentarza.",
+            rawData,
+          ].join("\n") }],
+        }],
+      }),
+    });
+    const payload = await openaiResponse.json();
+    if (!openaiResponse.ok) {
+      response.status(openaiResponse.status).json({ error: extractOpenAIError(payload) });
+      return;
+    }
+    const title = extractResponseText(payload).trim().replace(/^["„”]+|["„”]+$/g, "").slice(0, 90);
+    if (!title) {
+      response.status(502).json({ error: "OpenAI nie zwróciło tytułu." });
+      return;
+    }
+    response.json({ title });
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : "Nie udało się utworzyć tytułu." });
   }
 });
 
