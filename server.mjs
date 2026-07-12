@@ -939,8 +939,10 @@ app.post("/api/crm/extract-listing", async (request, response) => {
     const instruction = [
       "Jesteś asystentem polskiego biura nieruchomości. Zamień chaotyczną notatkę agenta na pola formularza.",
       "Nie zgaduj. Pole, którego nie da się pewnie ustalić, pomiń. Nie poprawiaj ceny ani metrażu na podstawie własnej wiedzy.",
+      "Przejrzyj każde zdanie notatki i wydobądź maksymalnie dużo jednoznacznych danych. Nie pomijaj balkonu, piwnicy, windy, standardu, ogrzewania, kuchni, wyposażenia, piętra, liczby sypialni ani informacji o okolicy.",
+      "Jeżeli dla mieszkania podano jeden metraż bez rozróżnienia, wpisz go jako areaTotal oraz details.areaUsable. Liczbę sypialni wpisz tylko wtedy, gdy wynika z notatki wprost (np. jedna sypialnia = 1).",
       "Zwróć wyłącznie poprawny JSON bez markdownu w kształcie:",
-      '{"fields":{"type":"Mieszkanie|Dom|Działka|Lokal","market":"wtorny|pierwotny","price":number,"areaTotal":number,"rooms":number,"buildingYear":number,"floor":"string","buildingFloors":"string","city":"string","estate":"string","street":"string","streetType":"ul.|al.|pl.|","buildingNumber":"string","apartmentNumber":"string","features":"string","portalTitle":"krótka propozycja tytułu na portal","details":{}},"missing":["krótkie pytanie po polsku"]}',
+      '{"fields":{"type":"Mieszkanie|Dom|Działka|Lokal","market":"wtorny|pierwotny","price":number,"areaTotal":number,"rooms":number,"buildingYear":number,"floor":"string","buildingFloors":"string","city":"string","estate":"string","street":"string","streetType":"ul.|al.|pl.|","buildingNumber":"string","apartmentNumber":"string","portalTitle":"sprzedażowy tytuł 45-65 znaków","details":{}},"missing":["krótkie pytanie po polsku"]}',
       `Dozwolone klucze details: ${allowedDetails.join(", ")}.`,
       "Dla pól typu tak/nie w details używaj boolean. Liczby zwracaj jako number, pozostałe wartości jako krótkie stringi.",
       "Nie zwracaj danych właściciela ani numeru księgi wieczystej. Numer budynku i lokalu zwróć tylko wtedy, gdy występują w notatce; CRM zapisze je jako prywatne.",
@@ -967,7 +969,7 @@ app.post("/api/crm/extract-listing", async (request, response) => {
     const parsed = JSON.parse(raw);
     const sourceFields = parsed && typeof parsed.fields === "object" ? parsed.fields : {};
     const resultFields = {};
-    const baseKeys = ["type", "market", "price", "areaTotal", "rooms", "buildingYear", "floor", "buildingFloors", "city", "estate", "street", "streetType", "buildingNumber", "apartmentNumber", "features", "portalTitle"];
+    const baseKeys = ["type", "market", "price", "areaTotal", "rooms", "buildingYear", "floor", "buildingFloors", "city", "estate", "street", "streetType", "buildingNumber", "apartmentNumber", "portalTitle"];
     for (const key of baseKeys) {
       if (sourceFields[key] !== undefined && sourceFields[key] !== null && sourceFields[key] !== "") resultFields[key] = sourceFields[key];
     }
@@ -1004,8 +1006,10 @@ app.post("/api/crm/suggest-title", async (request, response) => {
         input: [{
           role: "user",
           content: [{ type: "input_text", text: [
-            "Napisz jeden konkretny tytuł ogłoszenia nieruchomości na polski portal.",
-            "Maksymalnie 75 znaków. Bez emoji, wykrzykników, wielkich liter w całym tytule i bez niepotwierdzonych informacji.",
+            "Napisz jeden konkretny, sprzedażowy tytuł ogłoszenia nieruchomości na polski portal.",
+            "Tytuł musi mieć 45-65 znaków. Bez emoji, wykrzykników, ceny, adresu ulicy i wielkich liter w całym tytule.",
+            "Zacznij od najmocniejszej konkretnej cechy. Gdy dane na to pozwalają, zawrzyj typ nieruchomości, liczbę pokoi oraz jeden realny atut, np. balkon, parter, po remoncie, kompaktowe, gotowe do wejścia.",
+            "Nie używaj pustych zwrotów typu wyjątkowa oferta, okazja, musisz zobaczyć ani niepotwierdzonych informacji.",
             "Zwróć wyłącznie tytuł, bez cudzysłowu i komentarza.",
             rawData,
           ].join("\n") }],
@@ -1017,7 +1021,8 @@ app.post("/api/crm/suggest-title", async (request, response) => {
       response.status(openaiResponse.status).json({ error: extractOpenAIError(payload) });
       return;
     }
-    const title = extractResponseText(payload).trim().replace(/^["„”]+|["„”]+$/g, "").slice(0, 90);
+    let title = extractResponseText(payload).trim().replace(/^["„”]+|["„”]+$/g, "").replace(/\s+/g, " ");
+    if (title.length > 65) title = title.slice(0, 66).replace(/\s+\S*$/, "").replace(/[.,;:–—-]+$/, "");
     if (!title) {
       response.status(502).json({ error: "OpenAI nie zwróciło tytułu." });
       return;
@@ -1027,6 +1032,19 @@ app.post("/api/crm/suggest-title", async (request, response) => {
     response.status(500).json({ error: error instanceof Error ? error.message : "Nie udało się utworzyć tytułu." });
   }
 });
+
+function cleanCrmPortalDescription(value) {
+  const lines = String(value || "").replace(/\r/g, "").split("\n");
+  const stop = /^(?:#{1,4}\s*)?(?:sugestie tytułów|tytuły na portale|marketplace|facebook|instagram|sms|youtube|kontrola danych|pytania do właściciela|pytania do klienta|atuty ze zdjęć|materiały marketingowe)\b/i;
+  const kept = [];
+  for (const line of lines) {
+    const plain = line.replace(/[*_]/g, "").trim();
+    if (stop.test(plain)) break;
+    if (/^(?:#{1,4}\s*)?opis (?:na portale|portalowy|oferty)\s*:?[\s#]*$/i.test(plain)) continue;
+    kept.push(line);
+  }
+  return kept.join("\n").replace(/^\s+|\s+$/g, "").replace(/\n{3,}/g, "\n\n");
+}
 
 app.post("/api/crm/generate-description", async (request, response) => {
   try {
@@ -1080,7 +1098,7 @@ app.post("/api/crm/generate-description", async (request, response) => {
       response.status(openaiResponse.status).json({ error: extractOpenAIError(payload) });
       return;
     }
-    const description = extractResponseText(payload).trim();
+    const description = cleanCrmPortalDescription(extractResponseText(payload));
     if (!description) {
       response.status(502).json({ error: "OpenAI nie zwróciło opisu oferty." });
       return;
