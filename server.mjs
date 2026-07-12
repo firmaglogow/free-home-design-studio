@@ -1,5 +1,4 @@
 import dotenv from "dotenv";
-import { installCrmGuard } from "./crm-auth.mjs";
 import express from "express";
 import multer from "multer";
 import sharp from "sharp";
@@ -43,7 +42,6 @@ const framingModes = {
 };
 
 const app = express();
-installCrmGuard(app);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
