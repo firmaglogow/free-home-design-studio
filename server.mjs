@@ -1063,33 +1063,31 @@ app.post("/api/crm/generate-description", async (request, response) => {
       return;
     }
 
-    const instruction = [
-      buildListingCopyInstruction({
-        rawData,
-        extraNotes: "Opis jest generowany wewnątrz CRM. Zachowaj styl i zasady sprawdzonego modułu Opisy ofert.",
-        listingTones: "concrete,sales,premium",
-        listingDepth: "full",
-        propertyType,
-        imageCount: 0,
-      }),
-      "",
-      "SPECJALNY FORMAT DLA CRM — TA INSTRUKCJA MA PIERWSZEŃSTWO NAD PEŁNYM FORMATEM POWYŻEJ:",
-      "Zwróć wyłącznie sam główny opis portalowy, bez nagłówka Opis na portale i bez pozostałych materiałów marketingowych.",
-      "Nie zwracaj sugestii tytułów, Marketplace, Facebooka, SMS, YouTube, kontroli danych ani pytań do właściciela.",
-      "Zachowaj akapity, nagłówki sekcji i pogrubienia Markdown **tekst**. Nie używaj tabel ani kodu.",
-      currentDescription ? `ISTNIEJĄCY OPIS DO POPRAWY:\n${currentDescription}` : "Nie ma jeszcze istniejącego opisu — utwórz go od początku.",
-      revisionNotes ? `DODATKOWE UWAGI AGENTA DO NOWEJ WERSJI:\n${revisionNotes}` : "Brak dodatkowych uwag do redakcji.",
-      currentDescription
-        ? "Przygotuj pełną, poprawioną wersję opisu. Zachowaj prawidłowe fakty z istniejącej wersji, zastosuj uwagi agenta i uwzględnij aktualne dane formularza."
-        : "Przygotuj pełny opis na podstawie aktualnych danych formularza.",
-    ].join("\n");
+    // CRM korzysta dokładnie z tego samego generatora, ustawień domyślnych i
+    // pełnego promptu co zakładka „Opisy ofert”. Po odpowiedzi wycinamy tylko
+    // sekcję portalową — nie utrzymujemy już drugiego, rozjeżdżającego się
+    // wariantu instrukcji przeznaczonego specjalnie dla CRM.
+    const extraNotes = [
+      revisionNotes,
+      currentDescription && revisionNotes
+        ? `Popraw poniższy istniejący opis zgodnie z uwagami, zachowując wyłącznie potwierdzone fakty:\n${currentDescription}`
+        : "",
+    ].filter(Boolean).join("\n\n");
+    const instruction = buildListingCopyInstruction({
+      rawData,
+      extraNotes,
+      listingTones: "concrete,sales,premium",
+      listingDepth: "full",
+      propertyType,
+      imageCount: 0,
+    });
 
     const openaiResponse = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: listingModel,
-        max_output_tokens: 3200,
+        max_output_tokens: 6800,
         input: [{ role: "user", content: [{ type: "input_text", text: instruction }] }],
       }),
     });
@@ -1103,7 +1101,7 @@ app.post("/api/crm/generate-description", async (request, response) => {
       response.status(502).json({ error: "OpenAI nie zwróciło opisu oferty." });
       return;
     }
-    response.json({ description });
+    response.json({ description, generator: "listing-copy-studio" });
   } catch (error) {
     response.status(500).json({ error: error instanceof Error ? error.message : "Nie udało się stworzyć opisu oferty." });
   }
