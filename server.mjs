@@ -894,7 +894,7 @@ app.post("/api/listing-copy", upload.array("images", 8), async (request, respons
       return;
     }
 
-    const copy = extractResponseText(payload);
+    const copy = ensureListingPortalFooter(extractResponseText(payload), propertyType);
 
     if (!copy) {
       response.status(502).json({
@@ -1046,6 +1046,43 @@ function cleanCrmPortalDescription(value) {
   return kept.join("\n").replace(/^\s+|\s+$/g, "").replace(/\n{3,}/g, "\n\n");
 }
 
+function listingPortalFooter(propertyType) {
+  const ending = {
+    apartment: "Serdecznie zapraszamy na prezentację tego mieszkania. Skontaktuj się z nami i zobacz na żywo jego układ, lokalizację oraz możliwości.",
+    house: "Serdecznie zapraszamy na prezentację tego domu. Skontaktuj się z nami i zobacz na żywo jego układ, standard oraz możliwości.",
+    commercial: "Serdecznie zapraszamy na prezentację tego lokalu. Skontaktuj się z nami i zobacz na żywo jego przestrzeń, lokalizację oraz możliwości.",
+    plot: "Serdecznie zapraszamy na prezentację tej działki. Skontaktuj się z nami i poznaj na miejscu jej położenie, otoczenie oraz możliwości.",
+    other: "Serdecznie zapraszamy na prezentację tej nieruchomości. Skontaktuj się z nami i zobacz na żywo jej najważniejsze atuty oraz możliwości.",
+  }[propertyType] || "Serdecznie zapraszamy na prezentację tej nieruchomości. Skontaktuj się z nami i zobacz na żywo jej najważniejsze atuty oraz możliwości.";
+  return `**FREE HOME nieruchomości Głogów**\n${ending}`;
+}
+
+function ensureListingPortalFooter(value, propertyType) {
+  const source = String(value || "").replace(/\r/g, "").trim();
+  if (!source) return source;
+
+  // Stopka należy do opisu portalowego, dlatego sprawdzamy i naprawiamy tylko
+  // materiał przed kolejną główną sekcją. Nie dokładamy jej do Marketplace ani
+  // innych materiałów, w których nazwa biura jest celowo zabroniona.
+  const nextSection = /\n\s*(?:#{1,4}\s*)?(?:\*\*)?(?:Sugestie tytułów|Tytuły na portale)(?:\*\*)?\s*:?[ \t]*(?=\n|$)/i;
+  const boundary = source.search(nextSection);
+  let portal = (boundary >= 0 ? source.slice(0, boundary) : source).trimEnd();
+  const remainder = boundary >= 0 ? source.slice(boundary) : "";
+  const brand = /(?:\*\*)?FREE HOME nieruchomości Głogów(?:\*\*)?/i;
+  const match = brand.exec(portal);
+
+  if (!match) {
+    portal += `\n\n${listingPortalFooter(propertyType)}`;
+  } else {
+    const before = portal.slice(0, match.index).trimEnd();
+    const after = portal.slice(match.index + match[0].length).trim();
+    portal = `${before}\n\n**FREE HOME nieruchomości Głogów**`;
+    portal += after.length >= 45 ? `\n${after}` : `\n${listingPortalFooter(propertyType).split("\n").slice(1).join("\n")}`;
+  }
+
+  return `${portal}${remainder}`.trim();
+}
+
 app.post("/api/crm/generate-description", async (request, response) => {
   try {
     const apiKey = getOpenAIKey();
@@ -1096,7 +1133,10 @@ app.post("/api/crm/generate-description", async (request, response) => {
       response.status(openaiResponse.status).json({ error: extractOpenAIError(payload) });
       return;
     }
-    const description = cleanCrmPortalDescription(extractResponseText(payload));
+    const description = ensureListingPortalFooter(
+      cleanCrmPortalDescription(ensureListingPortalFooter(extractResponseText(payload), propertyType)),
+      propertyType,
+    );
     if (!description) {
       response.status(502).json({ error: "OpenAI nie zwróciło opisu oferty." });
       return;
@@ -1952,7 +1992,8 @@ function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listin
     "5. Sekcja: Wykończenie i stan techniczny.",
     "6. Sekcja: Media i opłaty.",
     "7. Sekcja: Dodatkowe informacje.",
-    "8. Stopka: FREE HOME nieruchomości Głogów + krótkie, sprzedażowe podsumowanie z zaproszeniem do kontaktu i obejrzenia nieruchomości.",
+    "8. OBOWIĄZKOWA stopka: **FREE HOME nieruchomości Głogów** + krótkie, sprzedażowe podsumowanie z zaproszeniem do kontaktu i obejrzenia nieruchomości.",
+    "Stopki nie wolno pominąć. Musi być ostatnim podpunktem opisu portalowego, bezpośrednio przed sekcją Sugestie tytułów.",
     "",
     "FORMAT GŁÓWNEGO OPISU",
     "W głównym opisie portalowym nie używaj list wypunktowanych, kropek-list, myślników-list ani numeracji wewnątrz sekcji.",
@@ -1962,7 +2003,8 @@ function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listin
     "Po tym pierwszym bloku wróć do normalnej pisowni. Sekcje Lokalizacja, Rozkład i powierzchnia, Wykończenie i stan techniczny, Media i opłaty oraz Dodatkowe informacje pisz normalnie, nie CAPS LOCKIEM.",
     "Każdy nagłówek sekcji w opisie portalowym musi być pogrubiony jako osobna linia, np. **Lokalizacja**.",
     "Bezpośrednio pod pogrubionym nagłówkiem sekcji ma być opis, bez pustej linii przerwy między nagłówkiem a opisem.",
-    "Na końcu opisu portalowego pogrub: **FREE HOME nieruchomości Głogów** oraz końcowe podsumowanie z CTA.",
+    "Na końcu opisu portalowego zawsze dodaj osobną linię **FREE HOME nieruchomości Głogów**, a pod nią 2-3 zdania dopasowanego podsumowania i CTA.",
+    "Nazwa **FREE HOME nieruchomości Głogów** musi być pogrubiona, ale tekst podsumowania pod nią ma pozostać zwykłym tekstem.",
     "Przed linią **FREE HOME nieruchomości Głogów** zostaw jedną pustą linię odstępu od poprzedniego akapitu.",
     "Końcowe CTA po nazwie FREE HOME ma mieć maksymalnie 2-3 zdania. Ma zachęcać do kontaktu, obejrzenia nieruchomości i umówienia prezentacji, ale bez lania wody i bez numeru telefonu.",
     "Nie używaj suchego zakończenia typu tylko: Zapraszam do kontaktu i na prezentację mieszkania. Zrób bardziej zachęcające podsumowanie, np. podkreśl, że warto zobaczyć układ, lokalizację lub potencjał na żywo.",
