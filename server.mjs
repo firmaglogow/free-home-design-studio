@@ -894,7 +894,10 @@ app.post("/api/listing-copy", upload.array("images", 8), async (request, respons
       return;
     }
 
-    const copy = ensureListingPortalFooter(extractResponseText(payload), propertyType);
+    const copy = ensureListingPortalFooter(
+      enforceListingPortalOpening(extractResponseText(payload)),
+      propertyType,
+    );
 
     if (!copy) {
       response.status(502).json({
@@ -1057,6 +1060,34 @@ function listingPortalFooter(propertyType) {
   return `**FREE HOME nieruchomości Głogów**\n${ending}`;
 }
 
+function enforceListingPortalOpening(value) {
+  const source = String(value || "").replace(/\r/g, "").trim();
+  if (!source) return source;
+
+  const nextMainSection = /\n\s*(?:#{1,4}\s*)?(?:\*\*)?(?:Sugestie tytułów|Tytuły na portale)(?:\*\*)?\s*:?[ \t]*(?=\n|$)/i;
+  const portalBoundary = source.search(nextMainSection);
+  const portal = portalBoundary >= 0 ? source.slice(0, portalBoundary) : source;
+  const remainder = portalBoundary >= 0 ? source.slice(portalBoundary) : "";
+  const firstDetailHeading = /^(?:#{1,4}\s*)?(?:\*\*)?(?:Lokalizacja)(?:\*\*)?\s*:?[ \t]*$/im;
+  const headingMatch = firstDetailHeading.exec(portal);
+  if (!headingMatch) return source;
+
+  const beforeHeading = portal.slice(0, headingMatch.index);
+  const afterHeading = portal.slice(headingMatch.index);
+  const hasPortalLabel = /^(?:#{1,4}\s*)?(?:\*\*)?Opis (?:na portale|portalowy|oferty)(?:\*\*)?\s*:?[ \t]*$/im.test(beforeHeading);
+  const boldFragments = [...beforeHeading.matchAll(/\*\*([^*]+)\*\*/g)]
+    .map((match) => match[1].trim())
+    .filter((text) => !/^Opis (?:na portale|portalowy|oferty)$/i.test(text));
+  if (!boldFragments.length) return source;
+
+  // Otwarcie ma dokładnie trzymać ustalony schemat: najwyżej dwa mocne zdania,
+  // oba pogrubione i zapisane wielkimi literami. Wszystko, co model dopisze
+  // małymi literami przed nagłówkiem „Lokalizacja”, jest usuwane.
+  const opening = boldFragments.slice(0, 2).join(" ").replace(/\s+/g, " ").trim().toLocaleUpperCase("pl-PL");
+  const label = hasPortalLabel ? "**Opis na portale**\n" : "";
+  return `${label}**${opening}**\n\n${afterHeading.trimStart()}${remainder}`.trim();
+}
+
 function ensureListingPortalFooter(value, propertyType) {
   const source = String(value || "").replace(/\r/g, "").trim();
   if (!source) return source;
@@ -1134,7 +1165,10 @@ app.post("/api/crm/generate-description", async (request, response) => {
       return;
     }
     const description = ensureListingPortalFooter(
-      cleanCrmPortalDescription(ensureListingPortalFooter(extractResponseText(payload), propertyType)),
+      enforceListingPortalOpening(cleanCrmPortalDescription(ensureListingPortalFooter(
+        enforceListingPortalOpening(extractResponseText(payload)),
+        propertyType,
+      ))),
       propertyType,
     );
     if (!description) {
@@ -1985,20 +2019,20 @@ function buildListingCopyInstruction({ rawData, extraNotes, listingTones, listin
     "Unikaj pustych fraz typu komfortowy standard bez wyjaśnienia. Każde mocne słowo podeprzyj faktem z danych.",
     "",
     "STAŁY SCHEMAT OPISU PORTALOWEGO",
-    "1. Najpierw nagłówek: mocny, sprzedażowy, wielkimi literami, przyciągający uwagę.",
-    "2. Następnie wstęp: krótko podsumuj metraż, typ nieruchomości, stan i potencjał.",
-    "3. Sekcja: Lokalizacja.",
-    "4. Sekcja: Rozkład i powierzchnia.",
-    "5. Sekcja: Wykończenie i stan techniczny.",
-    "6. Sekcja: Media i opłaty.",
-    "7. Sekcja: Dodatkowe informacje.",
-    "8. OBOWIĄZKOWA stopka: **FREE HOME nieruchomości Głogów** + krótkie, sprzedażowe podsumowanie z zaproszeniem do kontaktu i obejrzenia nieruchomości.",
+    "1. Najpierw blok otwierający: maksymalnie 2 mocne zdania, oba pogrubione w całości i zapisane wielkimi literami.",
+    "2. Bezpośrednio po bloku otwierającym sekcja: Lokalizacja. Nie dodawaj pomiędzy nimi żadnego wstępu, podsumowania, zdania przejściowego ani tekstu pisanego małymi literami.",
+    "3. Sekcja: Rozkład i powierzchnia.",
+    "4. Sekcja: Wykończenie i stan techniczny.",
+    "5. Sekcja: Media i opłaty.",
+    "6. Sekcja: Dodatkowe informacje.",
+    "7. OBOWIĄZKOWA stopka: **FREE HOME nieruchomości Głogów** + krótkie, sprzedażowe podsumowanie z zaproszeniem do kontaktu i obejrzenia nieruchomości.",
     "Stopki nie wolno pominąć. Musi być ostatnim podpunktem opisu portalowego, bezpośrednio przed sekcją Sugestie tytułów.",
     "",
     "FORMAT GŁÓWNEGO OPISU",
     "W głównym opisie portalowym nie używaj list wypunktowanych, kropek-list, myślników-list ani numeracji wewnątrz sekcji.",
     "Używaj składni Markdown do pogrubień: **tekst pogrubiony**.",
-    "Pierwszy blok po tytule sekcji Opis na portale musi mieć maksymalnie 2-3 krótkie, mocne zdania pogrubione w całości i napisane WIELKIMI LITERAMI. Nie wolno robić tam 4, 5 ani więcej zdań.",
+    "Pierwszy blok po tytule sekcji Opis na portale musi mieć maksymalnie 2 krótkie, mocne zdania pogrubione w całości i napisane WIELKIMI LITERAMI.",
+    "Po tych dwóch zdaniach od razu wpisz **Lokalizacja**. Nie wolno dopisywać trzeciego zdania, osobnego wstępu ani luźnego zdania małymi literami.",
     "Ten pierwszy blok ma być tylko szybkim otwarciem oferty, nie opisem całego mieszkania. Nie wyliczaj tam wszystkich pomieszczeń, technikaliów i okolicy; rozwiń je dopiero w kolejnych sekcjach.",
     "Po tym pierwszym bloku wróć do normalnej pisowni. Sekcje Lokalizacja, Rozkład i powierzchnia, Wykończenie i stan techniczny, Media i opłaty oraz Dodatkowe informacje pisz normalnie, nie CAPS LOCKIEM.",
     "Każdy nagłówek sekcji w opisie portalowym musi być pogrubiony jako osobna linia, np. **Lokalizacja**.",
