@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "npm run build && node server.mjs",
     "build": "tsc -p tsconfig.app.json --pretty false && node scripts/build-client.mjs",
+    "test": "node --test test/*.test.mjs",
     "preview": "node server.mjs",
     "start": "node server.mjs"
   },

@@ -14,6 +14,7 @@ cd "$APP"
 rm -rf _u
 git clone -q --depth 1 --branch "$BRANCH" "$REPO" _u
 cp -af _u/server.mjs _u/crm-auth.mjs _u/package.json _u/package-lock.json "$APP"/
+rm -rf "$APP/lib"; cp -af _u/lib "$APP/lib"
 [ -f _u/.env.example ] && cp -af _u/.env.example "$APP"/
 rm -rf "$APP/dist"; cp -af _u/dist "$APP/dist"
 cp -af _u/zdjecia-redeploy.sh "$HOME/zdjecia-redeploy.sh" 2>/dev/null || true
